@@ -1,0 +1,589 @@
+Power Quest is a fighter / RPG from the Gameboy Color in which the player can choose one of five robot models (Max, Gong, Speed, Axe, and Lon) and fight AI until s/he gets enough money to progress in the story. It's a massive grind, and instead of using save files, the game uses a password system.
+
+The passwords are 12 characters long, and each of the 31 symbols are listed below:
+★BCDFGHJKLMNPQRSTVWXYZ0123456789
+
+My first attempts to play with the password system involved taking a few assumptions and trying to work it out by hand. The assumptions were:
+1) Each character (in order) was represented by values 0x00 to 0x1F.
+2) The bits would be stored adjacent to one another to make one long string (this turned out to be false).
+
+So for a while you're going to be looking at me trying to work out some of this stuff by hand. Eventually, I realize I need to throw this into a debugger to figure out how it works, because I can no longer see any consistencies between passwords. I'll put a big note so you can scroll right to it.
+
+The first things you see below are me trying to see what bits change between money values. It's a waste of time.
+
+1100	01100 11001 11011 10110 01000 11001 11011 00111 01100 11001 10011 00110
+1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+1050	10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
+
+Closer look at the following:
+1100	01100 11001 11011 10110 01000 11001 11011 00111 01100 11001 10011 00110
+1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+
+Offset?
+011001100111011101100100011001110110011101100110011001100110
+001100110010001100110011001100100011001000110011001100110011
+
+|
+V
+
+0011001100111011101100100011001110110011101100110011001100110
+001100110010001100110011001100100011001000110011001100110011
+
+
+With the offset going from 1100 to 1000, the two align pretty close.
+
+XOR:
+ 0011001100111011101100100011001110110011101100110011001100110
+ 001100110010001100110011001100100011001000110011001100110011
+=000000000001100010000001000000011000000110000000000000000000
+
+Try it with the other?
+1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+1050	10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
+
+00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
+
+1001100110010001100110011001100100011001000110011001100110011
+100110011000100111001000100110001001100010011001100110011001
+
+XOR:
+ 1001100110010001100110011001100100011001000110011001100110011
+ 100110011000100111001000100110001001100010011001100110011001
+=000000000001100001010001000000011000000110000000000000000000
+
+
+The XOR results are pretty close:
+ 000000000001100001010001000000011000000110000000000000000000
+ 000000000001100010000001000000011000000110000000000000000000
+
+
+Patterns!
+Going from 1000 to 1100:
+Take the 1000 value, pull the first bit off the front and stick it at the end.
+I.E. circular shift left.
+Change bits 11, 12, 16, 23, 31, 32, 39, 40.
+
+Going from 1000 to 1050:
+Take the 1000 value, pull the last bit off the end and stick it at the front.
+I.E. circular shift right.
+Change bits 11, 12, 17, 19, 23, 31, 32, 39, 40.
+
+16, 17, 18, 19 seem to have direct relevance to the exact value. I'll see what happens if I
+leave the positioning as is and flip 11, 12, 16, 17, 19, 23, 31, 32, 39, 40.
+
+00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+00110 01100 11101 11110 00100 00000 10000 00010 00110 01100 11001 10011
+
+HP78
+FaTC
+HP3X
+
+
+Nope. Try just 16, 17, 19?
+
+00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+00110 01100 10001 11110 00110 01100 10001 10010 00110 01100 11001 10011
+
+HPV8
+HPVW
+HP3X
+
+Nope. I'm gonna see what happens at 1150.
+
+1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+1150	11001 10011 01110 11001 11111 10011 01110 01101 11001 10011 00110 01100
+
+001100110010001100110011001100100011001000110011001100110011
+110011001101110110011111110011011100110111001100110011001100
+
+001100110010001100110011001100100011001000110011001100110011
+00110011001101110110011111110011011100110111001100110011001100
+
+XOR:
+ 001100110010001100110011001100100011001000110011001100110011
+ 00110011001101110110011111110011011100110111001100110011001100
+=000000000001010001010100110000010100000101000000000000000000
+
+This one is a bit more distant. Let me compare it with 1050 and 1100.
+
+1050	10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
+1150	11001 10011 01110 11001 11111 10011 01110 01101 11001 10011 00110 01100
+
+ 1100110011000100111001000100110001001100010011001100110011001
+ 110011001101110110011111110011011100110111001100110011001100
+=000000000001100101111011100000011000000110000000000000000000
+
+Still reasonably ugly.
+
+1100	01100 11001 11011 10110 01000 11001 11011 00111 01100 11001 10011 00110
+1150	11001 10011 01110 11001 11111 10011 01110 01101 11001 10011 00110 01100
+
+ 011001100111011101100100011001110110011101100110011001100110
+ 0110011001101110110011111110011011100110111001100110011001100
+=000000000001100110101011100000011000000110000000000000000000
+
+Okay. Going from 1050 to 1150, circular shift right.
+Then flip bits 11, 12, 15, 17, 18, 19, 20, 22, 23, 24, 31, 32.
+
+Going from 1100 to 1150, circular shift left.
+Then flip bits 11, 12, 15, 16, 18, 20, 22, 23, 24, 31, 32, 39, 40.
+
+Is 1150 in there anywhere?
+
+Code for 1150: 110011001101110110011111110011011100110111001100110011001100
+Binary 1150: 10001111110
+Not in there, but I know the ones digit is never used anyway.
+115 in binary: 1110011. That's definitely in there.
+
+11001100110111011001111 1110011 0 1110011 0 1110011 00110011001100
+
+Uh, why is it in there three times?
+
+Let me check 1050 to see the same pattern:
+
+105 in binary: 1101001
+
+100110011000100111001000100110001001100010011001100110011001
+
+Not there. May have been a coincidence.
+
+Maybe if I invert the whole thing?
+
+1101001
+0010110
+
+Nope. What's in the same position?
+
+1050: 100110011000100111001000100110001001100010011001100110011001
+1150: 11001100110111011001111 1110011 0 1110011 0 1110011 00110011001100
+
+Let's rotate first.
+
+1050: 11001100110001001110010 0010011 0 0010011 0 0010011 00110011001100
+1150: 11001100110111011001111 1110011 0 1110011 0 1110011 00110011001100
+
+Interesting. Those bits have to be exactly the same across all 3.
+
+What's different?
+
+1050: 11001100110001001110010 0010011 0 0010011 0 0010011 00110011001100
+1150: 11001100110111011001111 1110011 0 1110011 0 1110011 00110011001100
+      00000000000110010111101
+
+I have no clue what this tells me.
+
+1000?
+
+1150: 11001100110111011001111 1110011 0 1110011 0 1110011 00110011001100
+1000: 0011001100100011001100110 0110010 0 0110010 0 0110011 001100110011
+
+From 1150, it's circular shifted right twice.
+
+The containing value is 0110010 which is 50. I'm missing something here.
+
+1100100 is binary 100.
+
+001100 1100100 0110011001100 1100100 0 1100100 0110011001100110011
+
+Also appears 3 times. Positioning is different.
+
+What of 1100?
+
+0110011001 1101110 1100100011001110110011101100110011001100110
+
+I'm also finding it in the 1150. This isn't a direct indicator of value. Let's look again at recurring values.
+
+1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+1050	10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
+1100	01100 11001 11011 10110 01000 11001 11011 00111 01100 11001 10011 00110
+1150	11001 10011 01110 11001 11111 10011 01110 01101 11001 10011 00110 01100
+
+001100110010001100110011001100100011001000110011001100110011
+100110011000100111001000100110001001100010011001100110011001
+011001100111011101100100011001110110011101100110011001100110
+110011001101110110011111110011011100110111001100110011001100
+
+Circular shifted:
+0011001100 10001100110011001100100011001000 110011001100110011
+0011001100 01001110010001001100010011000100 110011001100110011
+0011001100 11101110110010001100111011001110 110011001100110011
+0011001100 11011101100111111100110111001101 110011001100110011
+
+Major sections extracted:
+1000 1100 1100 1100 1100 1000 1100 1000
+0100 1110 0100 0100 1100 0100 1100 0100
+1110 1110 1100 1000 1100 1110 1100 1110
+1101 1101 1001 1111 1100 1101 1100 1101
+
+Matching columns:
+ 1000 1100 1100 1100 1100 1000 1100 1000
+ 0100 1110 0100 0100 1100 0100 1100 0100
+ 1110 1110 1100 1000 1100 1110 1100 1110
+ 1101 1101 1001 1111 1100 1101 1100 1101
+ 
+=0000 1100 0000 0000 1111 0000 1111 0000
+
+Looks like the first 16 bits can tell the number, then you have a flag nibble,
+then some information, then a flag nibble, and repeated information. I guess this
+checks the integrity of the data.
+
+As for the repeated information, might be an XOR key.
+
+ 1000 1100 1100 1100  1100  1000  1100  1000
+ 0100 1110 0100 0100  1100  0100  1100  0100
+ 1110 1110 1100 1000  1100  1110  1100  1110
+ 1101 1101 1001 1111  1100  1101  1100  1101
+
+1000 1100 1100 1100
+1000 1000 1000 1000
+0000 0100 0100 0100 -> 0444?
+
+Let's see if I can strip any extra information out of this.
+
+1000 with a different character:
+
+KVMF	08 11 0A 04
+KVWG	08 11 12 05
+KVCF	08 11 02 04
+
+1000M	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
+1000G	01000 10001 01010 00100 01000 10001 10010 00101 01000 10001 00010 00100
+
+There are some different patterns here. Looks like repeated binary 1000 is used in place of 1100.
+
+0011001100 10001100110011001100100011001000 110011001100110011
+
+010001000 1010 1000 1000 1000 1000 1100 1000 1010 1000100010001000100
+
+1050G
+
+ZM7S	15 0A 1D 0F
+1MGN	17 0A 05 0B
+ZMZM	15 0A 15 0A
+
+10101 01010 11101 01111 10111 01010 00101 01011 10101 01010 10101 01010
+
+
+101010101011101011111011101010001010101110101010101010101010
+
+Well, darn. This changes a lot. The repeated value is now 1010 as opposed to 1000.
+
+I think I'm at the point where I'm going to need to pop this into a debugger if I can.
+
+**************************************************************************
+***********************DEBUGGING SECTION**********************************
+**************************************************************************
+
+Using bgb as a gameboy debugger.
+
+Let's look at the memory sections here.
+
+-ROM0 (0x3FFF bytes)
+-ROM1 (0x3FFF bytes)
+-VRA0 (0x1FFF bytes)
+-SRA0 (0x1FFF bytes)
+-WRA0 (0x0FFF bytes)
+-WRA1 (same)
+-ECH0 (same)
+-ECH1 (0x0DFF bytes)
+-OAM (0x9F bytes)
+---- (??)
+-I/O
+-HRAM
+
+Also, let's hit up a manual on the GBC because well I want to know what I'm looking at
+
+http://marc.rawer.de/Gameboy/Docs/GBCPUman.pdf
+
+I'll look at the registers first. Those tend to be good to know.
+
+GPRs ABCDEFHL, each 8 bits.
+They can act as 16 bit registers when paired as:
+
+AF
+BC
+DE
+HL.
+
+Also have a SP and a PC. No base register!
+
+Flag register
+Zero	Subtract	HalfCarry	Carry
+
+PC is initialized to 0x100 on powerup
+
+Note: $C000 to $DFFF is low RAM space - WRA0 and 1.
+
+At the time of this writing, the SP is at $CFFB, so that aligns with what I just wrote.
+
+I'm going to reboot this and take a look at how the passwords are handled.
+
+This is kind of tough without knowing where exactly the password routine is.
+
+Looks like $FFC4 has the byte with button I/O in it. 1 is set if A is pressed, 2 is set if B is pressed.
+
+I can set a breakpoint on pressing A at the end of password entry and step from there.
+
+The routine at $64BF looks promising.
+
+$672E?
+
+$54AC?
+
+$54FE gets called a lot.
+
+The routine starting at about $54AC refers to (bc) a lot which is the address $D082
+
+Hm, around $CFF1 is the top of the stack so I'm going to look at that again.
+
+There's a value at that point which changes in accordance with the value I press, but putting a breakpoint there alone is a bad idea because it's being used for music playing. I'm going to break on left/right and see if I can break at that point on the stack next.
+
+That didn't help much.
+
+Hey, the alphabet is at $CA00, so I might be able to break on a read to that later.
+
+Oh! By scrolling around I was able to find values that corresponded to the password!
+
+Character 1 of 12 is at $98A3
+Character 2 of 12 is at $98A7
+$98AB
+$98AF
+$9923
+$9927..
+
+I think this might be a map of characters for the screen.
+
+Yeah, I see the hex codes for PASSWORD above here.
+
+FOUND IT
+
+Buffer starts at $E248
+
+This confirms my hunch of those characters being used to represent values from 00 to 1F in hex.
+
+Position is held at $E217
+
+Sweet, now I just need to set an access breakpoint on a read of that location.
+
+Wait. Right. Read breakpoints don't work.
+
+Let me start that over.
+
+Still n- wait this is the echo ram. Should be at about $C248 then.
+
+Wow the PC was at $4E42 for this routine I was way off.
+
+Let's trace this through.
+
+*(HL) represents the 16-bit address for the first character in the password.
+*When an OR is encountered without another operand, the OR is with A. OR B = A|B -> A
+
+Position -> Operation -> Storage
+
+0 -> shift left 3 times -> B
+1 -> shift right 2 times, OR B -> $FFD4
+1 -> shift left 6 times -> B
+2 -> shift left, OR B -> B
+3 -> shift right 4 times, OR B -> $FFD5
+3 -> shift left 4 times -> B
+4 -> shift right, OR B -> $FFD6
+4 -> shift left 7 times -> B
+5 -> shift left 2 times, OR B -> B
+6 -> shift right 3 times, OR B -> $FFD7
+6 -> shift left 5 times -> B
+7 -> OR B -> $FFD8
+8 -> shift left 3 times -> B
+9 -> shift right 2 times, OR B -> $FFD9
+9 -> shift left 6 times -> B
+10-> shift left, OR B -> B
+11-> shift right 4 times, OR B -> $FFDA
+11-> AND 0x0F -> $FFDB
+
+At $4EE6.
+
+FFD4-FFDB looks like this when correct: 00 05 0D 01 23 08 00
+When incorrect:							00 44 32 14 C7 42 54
+
+After all this, it looks like some checking is done:
+
+Take the lower nibble of the last symbol, copy it into the top and bottom of A, and XOR it with all values from $FFD4 to $FFDB
+
+The correct code values at $FFD4-$FFDB is now: 00 05 0D 01 23 08 00
+Incorrect code values: 						   BB FF 89 AF 7C F9 EF
+
+Interestingly, the encodings need to be the same after being XORd with the lower nibble of the last symbol
+
+At $4EF6.
+
+Now:
+-Load 7 into D
+-Load 0 into E
+-Load $FFD4 into HL
+-Put (HL) into A
+-Swap the lower and upper nibbles in A
+-Clear the top nibble of A (so now we just have the lower nibble of $FFD4)
+-Add E to A
+-Stick the result in E
+
+$4F04
+
+I decided to let the whole thing pass through to see if the values stayed the same. They did.
+
+If I change the value and enter the status menu, it gets overwritten.
+
+From here, it looks like the overwrite comes from $C8C0
+
+So somewhere around that range is the data I want changed.
+
+Let's see what gets modified when I get more money.
+
+$C8C0 (the 0D above) got changed. Now it's 0E when I get 50 more credits. Changing it to 0F doesn't give me more, though.
+
+Playing with the values in that range don't seem to be helping, so I'm going to play with the loader again.
+
+Found the data. Modifiable stuff was at $CF10
+
+FFD4: 00 05 0D 01 23 08 00
+CF10: 05 00 01 23 0D 08 00
+
+Looks like in live execution, four bytes are reserved for the actual value and they're taken at face value as well.
+
+Now I'm just down to playing with the values until I get some static meaning for everything and then I can look at the encoder.
+
+When you switch models, you get to keep your parts but they get switched to whatever the corresponding move is. So that's good.
+
+Here's the byte map:
+
+Money	Money	Money	Money	Model	Story	Lang	Part1	Part2
+
+The part bytes are structured as follows:
+
+X X X X 2(1) X X 1(1)
+Pwr Hl X X X X X 3(1)
+
+I don't seem to be able to modify part1 and part2 directly to find out what the rest of the bits are. From what I can tell, those values are stored around $C8C9.
+
+Okay, so there are bytes around $C8C1 which contain the part data. Structure as follows:
+
+Part1	Part2	Part3	CtrAttack	Heal	Power	Special
+
+Raw values corresponds to the level of each part for parts 1, 2, 3, ctrattack. Heal and Pwr don't have levels.
+
+$CF13 changed when I did something related to the story - from 0x24 to 0x25
+
+$C8BF seems to be the location of important story data.
+
+Let's take it from the top and mark each piece of the story progression.
+
+00 - entry
+01 - unlock L1
+3F - unlock L2 (and scientist)
+41 - tournament open
+5F - tournament won
+A3 - tournament 2 open
+C0 - game over
+
+From playing with password generations, it looks like while I am able to modify the live data to give me a super part, it will not save correctly.
+
+Oh wait no if I modify the part bits to be 0x07 instead of 0x08 it'll save it through and I'll have super parts. Interestingly enough, if I take a super part for one of the heavyweight models, using a move that shakes the screen will cause it to freak out.
+
+Okay, so here's what I can control:
+
+-Money
+-Story progression
+-Model
+-Parts
+
+And let's recap on controlling:
+
+-Money is controlled directly in the bytes $CF0E, $CF0F, $CF10, $CF11.
+-Model is controlled directly by byte $CF12.
+-Story is controlled directly by byte $C8BF and updated to $CF13 whenever something in the story changes.
+-Parts are controlled directly in the bytes $C8C1 to $C8C7 and updated to $CF15 and $CF16 whenever a part is sold or obtained.
+
+Part bits:
+With everything + supers, I have 7F FF
+
+Remove heal, 7F BF
+Remove power, 7F 3F
+Remove P1 super, 78 3F
+Remove P3 super, 40 3F
+Remove P2 super, 40 38
+Remove CTR, 40 00
+
+$CF15	X	Spc	2L4	2L2	2L1	1L4	1L2	1L1
+$CF16	Pwr	Hl 	CT4 CT2	CT1	3L4	3L2 3L1
+
+L1+L2 bits = L3
+L1+L2+L4 bits = Super
+Top bit of $CF15 never needed.
+^EDIT: After implementing the password generator I realized that it's actually used for a second special part. It was an easy fix, thankfully.
+
+Now I have a full breakdown of what happens starting at $CF0E.
+
+$CF0E	$CF0F	$CF10	$CF11	$CF12	$CF13	$CF14	$CF15	$CF16
+Money	Money	Money	Money	Model	Story	Lang	Part1	Part2
+
+Oh. Worth noting is that $CF0E is ignored in generating save passwords. Interesting.
+
+$CF0F	$CF10	$CF11	$CF12	$CF13	$CF14	$CF15	$CF16
+Money	Money	Money	Model	Story	Lang	Part1	Part2
+
+Finally, I need to figure out how this stuff gets turned into a password. Lang can be ignored - that's set at the beginning of the game.
+
+Please, PLEASE generate it every time I bring up the password screen.
+
+Remember: It's written to $FFD4.
+
+Okay, looks like it's written to that area every time.
+
+Note: $C8C0 gets used. This contains a counter of fights you participate in. If it gets to 0F, you can fight the announcer.
+
+356360 credits:
+Put first byte of money in $FFD4
+Second byte of money in $FFD5
+Top nibble of third byte of money and bottom nibble being announcer-counter in $FFD6
+
+Some extra checks which set flags? Not sure what the controls are. Something around CF28, 35, 36, 37.
+
+Model in lower 3 bits of $FFD7
+Story in $FFD8
+Parts in $FFD9 and $FFDA
+
+Now the encryption:
+E = 0
+for (d=7, d!=0, d--)
+	E += $FFD4[i][7:4] + $FFD4[i][3:0]
+
+#E=0x48 in this case
+
+$FFDB[7:4] = E[3:0]
+D[7:4] = E[3:0]
+D[3:0] = E[3:0]
+
+for (e=7, e!=0, e--)
+	$FFD4[i] = $FFD4[i] XOR D
+	
+Load $FFD4, shift right 3 times, store in $C248.
+Load $FFD4, shift left 2 times, AND 1C, store in B
+Load $FFD5, swap, shift right 2 times, AND 03, OR B,  store in $C249
+Load $FFD5, shift right, AND 1F, store in $C24A
+Load $FFD5, swap, AND 10, store in B
+Load $FFD6, swap, AND 0F, OR B, store in $C24B
+Load $FFD6, shift left, AND 1E, store in B
+Load $FFD7, swap, shift right 3 times, AND 01, OR B, store $C24C
+Load $FFD7, shift right 2 times, AND 1F, store in $C24D
+Load $FFD7, shift left 3 times, AND 18, store in B
+Load $FFD8, swap, shift right, AND 07, OR B, store in $C24E
+Load $FFD8, AND 1F, store in $C24F
+Load $FFD9, shift right 3 times, store in $C250
+Load $FFD9, shift left 2 times, AND 1C, store in B
+Load $FFDA, swap, shift right 2 times, AND 03, OR B, store in $C251
+Load $FFDA, shift right, AND 1F, store in $C252
+Load $FFDA, swap, AND 10, store in B
+Load $FFDB, swap, and 0F, OR B, store in $C253
+
+$C248-$C253 will now have the password, properly encoded.
+
+Now to make my own implementation.
