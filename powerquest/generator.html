@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Power Quest Password Generator</title>
+<script type="text/javascript" src="jquery-2.1.3.min.js"></script>
+<script type="text/javascript" src="encoder.js"></script>
+</head>
+<body>
+My ramblings detailing how I put this together can be found <a href="Crack.txt">here</a>.
+<br />
+<br />
+
+Story Progression:<br />
+<input type="radio" name="story" value="01">None<br />
+<input type="radio" name="story" value="3F">Beat General<br />
+<input type="radio" name="story" value="41">Spring Tournament Open<br />
+<input type="radio" name="story" value="5F">Spring Tournament Won<br />
+<input type="radio" name="story" value="A3">National Tournament Open<br />
+<input type="radio" name="story" value="C0">End
+<br />
+<br />
+
+Money (Maximum 999990):<br />
+<input type="text" name="money">
+<br />
+<br />
+
+Model:<br />
+<input type="radio" name="model" value="1">Max<br />
+<input type="radio" name="model" value="2">Gong<br />
+<input type="radio" name="model" value="3">Speed<br />
+<input type="radio" name="model" value="4">Axe<br />
+<input type="radio" name="model" value="5">Lon
+<br />
+<br />
+<br />
+
+<strong>Parts</strong><br />
+<em>Note: "Super" parts are not normally accessible in-game. In the shop, they'll show up as L3, L3, L3 and L1 (respectively). At home, they'll show up as "Pist."</em>
+<br />
+<br />
+
+Part 1:<br />
+<input type="radio" name="part1" value="0">None<br />
+<input type="radio" name="part1" value="1">L1<br />
+<input type="radio" name="part1" value="2">L2<br />
+<input type="radio" name="part1" value="3">L3<br />
+<input type="radio" name="part1" value="7">Super
+<br />
+<br />
+
+Part 2:<br />
+<input type="radio" name="part2" value="0">None<br />
+<input type="radio" name="part2" value="1">L1<br />
+<input type="radio" name="part2" value="2">L2<br />
+<input type="radio" name="part2" value="3">L3<br />
+<input type="radio" name="part2" value="7">Super
+<br />
+<br />
+
+Part 3:<br />
+<input type="radio" name="part3" value="0">None<br />
+<input type="radio" name="part3" value="1">L1<br />
+<input type="radio" name="part3" value="2">L2<br />
+<input type="radio" name="part3" value="3">L3<br />
+<input type="radio" name="part3" value="7">Super
+<br />
+<br />
+
+CounterAttack:<br />
+<input type="radio" name="ctr" value="0">None<br />
+<input type="radio" name="ctr" value="1">L1<br />
+<input type="radio" name="ctr" value="2">L2<br />
+<input type="radio" name="ctr" value="3">L3<br />
+<input type="radio" name="ctr" value="7">Super
+<br />
+<br />
+
+Power:<br />
+<input type="radio" name="pwr" value="1">Yes<br />
+<input type="radio" name="pwr" value="0">No
+<br />
+<br />
+
+Heal:<br />
+<input type="radio" name="heal" value="1">Yes<br />
+<input type="radio" name="heal" value="0">No
+<br />
+<br />
+
+Special 1:<br />
+<input type="radio" name="spc1" value="1">Yes<br />
+<input type="radio" name="spc1" value="0">No
+<br />
+<br />
+
+Special 2:<br />
+<input type="radio" name="spc2" value="1">Yes<br />
+<input type="radio" name="spc2" value="0">No
+<br />
+<br />
+<button onClick="encode()">Submit</button>
+</body>
+</html>
