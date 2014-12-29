@@ -1,3 +1,8 @@
+Edit: Starting from here, I'm trying to stick all the characters in a password together as bit strings.
+I know there are only 31 symbols, so I take it as meaning 5 bits per character and I can stick them all together.
+The first thing you'll see is me trying to decode it all by hand. I'll put a big note at the start of the debugging
+section (about halfway through) so you can skip to that if you want to waste less time.
+
 1100	01100 11001 11011 10110 01000 11001 11011 00111 01100 11001 10011 00110
 1000	00110 01100 10001 10011 00110 01100 10001 10010 00110 01100 11001 10011
 1050	10011 00110 00100 11100 10001 00110 00100 11000 10011 00110 01100 11001
@@ -257,6 +262,10 @@ ZMZM	15 0A 15 0A
 Well, darn. This changes a lot. The repeated value is now 1010 as opposed to 1000.
 
 I think I'm at the point where I'm going to need to pop this into a debugger if I can.
+
+**************************************************************************
+***********************DEBUGGING SECTION**********************************
+**************************************************************************
 
 Using bgb as a gameboy debugger.
 
