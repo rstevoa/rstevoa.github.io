@@ -1,0 +1,51 @@
+Johannesburg
+
+	The LockIT Pro b.04  is the first of a new series  of locks. It is
+    controlled by a  MSP430 microcontroller, and is  the most advanced
+    MCU-controlled lock available on the  market. The MSP430 is a very
+    low-power device which allows the LockIT  Pro to run in almost any
+    environment.
+
+    The  LockIT  Pro   contains  a  Bluetooth  chip   allowing  it  to
+    communiciate with the  LockIT Pro App, allowing the  LockIT Pro to
+    be inaccessable from the exterior of the building.
+
+    There  is no  default  password  on the  LockIT  Pro HSM-1.   Upon
+    receiving the  LockIT Pro,  a new  password must  be set  by first
+    connecting the LockitPRO HSM to  output port two, connecting it to
+    the LockIT Pro App, and entering a new password when prompted, and
+    then restarting the LockIT Pro using the red button on the back.
+    
+    LockIT Pro Hardware  Security Module 1 stores  the login password,
+    ensuring users  can not access  the password through  other means.
+    The LockIT Pro  can send the LockIT Pro HSM-1  a password, and the
+    HSM will  return if the password  is correct by setting  a flag in
+    memory.
+    
+    This is Hardware  Version B.  It contains  the Bluetooth connector
+    built in, and two available  ports: the LockIT Pro Deadbolt should
+    be  connected to  port  1,  and the  LockIT  Pro  HSM-1 should  be
+    connected to port 2.
+
+    This is Software Revision 04. We have improved the security of the
+    lock by ensuring passwords that are too long will be rejected.
+	
+If the password is too long, it stops the program.
+
+It doesn't bother doing this until the end though, so while I can't overwrite the return address, I should be able to exploit the buffer overflow anyway.
+
+Oh wait, when I tried to input passwordpasswordpasswordpassword and started looking around, I noticed I was overwriting functions. Let me see about that.
+
+I attempted to overwrite __stop_progExec__ with a call to unlock, but there was a cutoff after a certain point.
+
+Looking forward, I once again could't figure out how this thing would work using the correct password. The function appears to assign r15 to 0 no matter what.
+
+Looking back at Hanoi reminded me that there could be another compare.
+
+Really? It compares the byte following the buffer to 0x24 to check if it was overflowed?
+
+Alright. Looks like I'll be overwriting, setting that one byte to 0x24, and setting the return address to the unlock_door function.
+
+6161616161616161616161616161616161244644
+
+I wouldn't have expected that kind of vulnerability.

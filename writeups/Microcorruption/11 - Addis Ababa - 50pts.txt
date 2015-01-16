@@ -1,0 +1,92 @@
+Addis Ababa
+
+	The LockIT Pro b.03  is the first of a new series  of locks. It is
+    controlled by a  MSP430 microcontroller, and is  the most advanced
+    MCU-controlled lock available on the  market. The MSP430 is a very
+    low-power device which allows the LockIT  Pro to run in almost any
+    environment.
+
+    The  LockIT  Pro   contains  a  Bluetooth  chip   allowing  it  to
+    communiciate with the  LockIT Pro App, allowing the  LockIT Pro to
+    be inaccessable from the exterior of the building.
+
+    There  is no  default  password  on the  LockIT  Pro HSM-1.   Upon
+    receiving the  LockIT Pro,  a new  password must  be set  by first
+    connecting the LockitPRO HSM to  output port two, connecting it to
+    the LockIT Pro App, and entering a new password when prompted, and
+    then restarting the LockIT Pro using the red button on the back.
+    
+    LockIT Pro Hardware  Security Module 1 stores  the login password,
+    ensuring users  can not access  the password through  other means.
+    The LockIT Pro  can send the LockIT Pro HSM-1  a password, and the
+    HSM will  return if the password  is correct by setting  a flag in
+    memory.
+    
+    This is Hardware  Version B.  It contains  the Bluetooth connector
+    built in, and two available  ports: the LockIT Pro Deadbolt should
+    be  connected to  port  1,  and the  LockIT  Pro  HSM-1 should  be
+    connected to port 2.
+
+    This is Software Revision 03. We have improved the security of the
+    lock by ensuring passwords can not be too long.
+
+So this thing only lets me give it 20 characters, including the null byte.
+
+I couldn't figure out how to buffer overflow this, so I went back and looked at the overview/description. It mentioned that the usernames are printed back, which hinted that I might be able to exploit printf somehow.
+
+Stack Overflow noted that there's an exploit in printf if the string is passed as a parameter instead of the format, which I believe is happening.
+
+The printf function is slightly different. It's a bit more limited in terms of what can be printed out using the conversion specifiers. This list is in the manual:
+
+%x: Unsigned int
+%s: String
+%c: Character
+%n: Saves number of characters printed
+
+%x isn't useful because I can't specify to print anything other than the next thing on the stack, which I can see anyway.
+%s is the same (and there's a whole bunch of null bytes)
+%c is the same as %x.
+%n is what's going to be useful. I just need to figure out how.
+
+I eventually decide to step through printf to see where it looks following the %n to save information, because I need to feed it an address.
+
+Test data: aa%naa
+
+It checks each character for a %. After it sees that, it checks the following character for a second %.
+It keeps a count of each one because it needs to know how many parameters there are.
+Then it keeps reading until the end of the string.
+Had trouble following it for a while.
+After some time, I watched it put something at 322c.
+Then it's looping back through to print each letter with putchar.
+It gets to the %, and puts the following byte in r14 so it can check whether to print %.
+It doesn't, compares with 0x73, so if this were %s it'd do something but it's not.
+Then it checks 0x78, so if this were %x it'd do something but it's not.
+Then it checks 0x6e which is %n so it's gonna do stuff now!
+It puts whatever is at r9 (322c) into r15. That's 0x00.
+Then it puts whatever is r10 (2) into where r15 is pointing, so it's trying to save the number of characters printed at 0x00.
+I'm done here. The byte I need to watch is at 322c.
+
+I couldn't get it to add more to that area without using more conversion specifiers (I used %x).
+
+Note from after solving this: This was the best explanation I could find regarding what happens. http://puu.sh/7lQty.png
+I just don't understand why it actually started writing data higher up in the stack to read later from %n.
+
+%x%x%x%n allows me to overwrite that byte, which explains the load address unaligned error I'd been seeing while messing with it before.
+
+a%x%xa%n allowed me to overwrite the important byte with 2561, I think, because I didn't get the same error.
+
+aa%x%x%n gave me the error. (saw aa%x in the relevant area)
+
+aaaa%x%x%n gave me the error with address 6161. I'll try overwriting 3210
+
+Hex input 1032103225782578256e
+
+I put the number 7 in 3210. Cool I guess?
+
+After printf, it tests the stack pointer for the value 0x0. I'll stick 0x7 there (which is 3242).
+
+Hex input 4232423225782578256e
+
+I have 0x8 in the spot with the stack pointer. Test, and...
+
+YES

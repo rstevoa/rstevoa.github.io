@@ -1,0 +1,179 @@
+mynameisg.us
+RE1: Top Secret
+Given: 32-bit ELF file (named "crackme")
+Solution:
+
+	The first thing you need to do with the file
+is run a chmod because trying to use ./crackme fails.
+After you've added execute permissions (and in my case
+I needed to run sudo apt-get install ia32-libs because
+I was running on a 64 bit Ubuntu installation and it
+was a 32 bit executable) you can run and gdb it.
+
+	Once the permissions are changed, running ./crackme
+shows a message saying this is super secret. You enter a key,
+and as expected the key you enter is wrong, the thing says it's
+going to self destruct in 5, and the program ends.
+
+	Start it in gdb. Commands:
+1) gdb crackme
+2) set disassembly-flavor intel
+3) disas main
+
+	It calls a puts (put string) which is going to be
+the message telling you to enter a key. Then it calls
+get_key, which runs a scanf to get the key (seen through
+disas get_key). Then it runs a compare_key function, and
+then goes through some logic to determine whether to run
+puts or invalid_key. By doing a jump, I learned that the
+second puts is just a welcome message, so it only gets
+called if you have a valid key
+
+	Running a disas compare_key shows a whole bunch
+of mov operations, followed by an xor and add operations.
+Examination of the code between *compare_key+85 and
+*compare_key+106 shows that this loops amongst the values
+in the previous mov operations and xors them with a
+specific value.
+
+	What's really happening here is it starts at the
+first value, located at ebp-0x2c, and goes through each
+one after up to ebp-0xc (shown by the mov eax, DWORD
+PTR [ebp+eax*4-0x2c]). While looping through each value,
+it xors that value with whatever is stored at ebp+0x8,
+and then adds it to ebp-0x4 (a result variable).
+
+	By using info registers ebp and x/x ebp+0x8 at a
+breakpoint in compare_key, it became evident that ebp+0x8
+stored the input collected in get_key. So, I was able to
+recreate the hash in python:
+
+
+i = 0x00001234	# or whatever hex input is desired
+		#
+		# by the way it expects the input to be
+		# a hex integer
+
+result = 0
+result += 0x000000a6 ^ i
+result += 0x000000d4 ^ i
+result += 0x000000e3 ^ i
+result += 0x000000ab ^ i
+result += 0xffffffff ^ i
+result += 0x00000082 ^ i
+result += 0x00000011 ^ i
+result += 0x00000007 ^ i
+result += 0x000000b2 ^ i
+
+print hex(result)
+
+
+	So now I could hash whatever value I wanted using
+python. The last thing in the compare_key function was a
+mov call which put the result in eax. So I went back to
+looking at main. Right after the call to compare_key was
+a comparison with the result with the direct value
+0x88b913de. So the key needed to hash to that.
+
+	I thought "Hey! This is additive, so it should be easy
+to test some values and use a high-low method to figure out
+what the key is!" I'd like to condense the next more-hours-
+than-I'm-comfortable-admitting as follows: no. Here's why:
+
+	When all the results of those xor operations got
+added together, sometimes it went over 0xffff ffff. Anything
+that overflowed that double word would get discarded, so if the
+value hashed to 0x188b913de as opposed to 0x88b913de, that
+would be totally acceptable, so the range of possible inputs
+was much larger than expected. I modified the python script
+to test inputs until the desired output was received:
+
+
+i = 0x00000000
+numIts = 0
+while i < 0xffffffff
+	result = 0
+	result += 0x000000a6 ^ i
+	result += 0x000000d4 ^ i
+	result += 0x000000e3 ^ i
+	result += 0x000000ab ^ i
+	result += 0xffffffff ^ i
+	result += 0x00000082 ^ i
+	result += 0x00000011 ^ i
+	result += 0x00000007 ^ i
+	result += 0x000000b2 ^ i
+
+	if (hex(result)[-8:] == "88b913de"):
+		print(hex(i))
+		break
+	
+	if (numIts % 100000 == 0): #to make sure it's still running
+		print hex(i) + " " + hex(result)
+	
+	i += 0x00000001
+	numIts += 1
+
+
+	It would have taken too long to loop from input of
+0x00000000 to 0xffffffff. I really didn't want to leave
+my computer running however long with that. So after staring at
+the xor'd values for some more time I came to the realization
+that the last two digits must be some static value I can find
+out in a smaller loop. So I made this python script:
+
+
+i = 0x00
+
+while i < 0xff
+	result = 0
+	result += 0xa6 ^ i
+	result += 0xd4 ^ i
+	result += 0xe3 ^ i
+	result += 0xab ^ i
+	result += 0xff ^ i
+	result += 0x82 ^ i
+	result += 0x11 ^ i
+	result += 0x07 ^ i
+	result += 0xb2 ^ i
+
+	if (hex(result)[-2:] == "de"):
+		print(hex(i))
+
+
+	This would loop through and quickly find out what the
+last two digits of the input had to be, and it resulted
+in "ad". So I was able to make my final script:
+
+
+i = 0x000000ad
+numIts = 0
+while i < 0xffffffff
+	result = 0
+	result += 0x000000a6 ^ i
+	result += 0x000000d4 ^ i
+	result += 0x000000e3 ^ i
+	result += 0x000000ab ^ i
+	result += 0xffffffff ^ i
+	result += 0x00000082 ^ i
+	result += 0x00000011 ^ i
+	result += 0x00000007 ^ i
+	result += 0x000000b2 ^ i
+
+	if (hex(result)[-8:] == "88b913de"):
+		print(hex(i))
+		break
+
+	if (numIts % 100000 == 0): #to make sure it's still running
+		print hex(i) + " " + hex(result)
+
+	i += 0x00000100
+	numIts += 1
+
+
+	The correct key was 0xeef5dead. I feel like
+this python script could be generalized to quickly break
+simple additive xor hashes by figuring out what the last
+digit has to be, then what the second to last digit has
+to be, etc. But I have no idea if anyone ever actually uses
+a hash that simple. I'll try writing the generalized script
+if I get some spare time or something.

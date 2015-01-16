@@ -1,0 +1,101 @@
+Reykjavik
+
+    The LockIT Pro a.03  is the first of a new series  of locks. It is
+    controlled by a  MSP430 microcontroller, and is  the most advanced
+    MCU-controlled lock available on the  market. The MSP430 is a very
+    low-power device which allows the LockIT  Pro to run in almost any
+    environment.
+
+    The  LockIT  Pro   contains  a  Bluetooth  chip   allowing  it  to
+    communiciate with the  LockIT Pro App, allowing the  LockIT Pro to
+    be inaccessable from the exterior of the building.
+
+    There is  no default password  on the LockIT  Pro---upon receiving
+    the LockIT Pro, a new password must be set by connecting it to the
+    LockIT Pro  App and  entering a password  when prompted,  and then
+    restarting the LockIT Pro using the red button on the back.
+    
+    This is Hardware  Version A.  It contains  the Bluetooth connector
+    built in, and one available port  to which the LockIT Pro Deadbolt
+    should be connected.
+
+    This is Software Revision 02. This release contains military-grade
+    encryption so users can be confident that the passwords they enter
+    can not be read from memory.   We apologize for making it too easy
+    for the password to be recovered on prior versions.  The engineers
+    responsible have been sacked.
+    
+Main immediately makes a call to an enc function which indicates encryption is involved in the key.
+
+GPRs r15 and r14 are being used for main. Six registers - R13 down through R8 are in enc.
+
+Note for later: I see the string "ThisIsSecureRight?" somewhere in memory.
+
+I'm going to try and get a feel for the flow of this function:
+
+First it does a loop to load up consecutive bytes with incremental values. Ex: 01 02 03 04 05 06 ... fa fb fc fd fe ff
+
+Then it does a loop which effectively swaps values around in the table it created.
+
+Then it does another loop which mixes them up even more via xor
+
+Oh, after this function it calls #2400 which is the address of the new data. So it has created more instructions from scratch.
+
+I need to disassemble this. Thankfully it tells me what's happening at each instruction.
+
+#2400
+push    r11
+push    r4
+mov     sp,     r4
+add     #0x4,   r4
+add     #0xffe0,sp
+mov     #0x4520,r11
+jmp     $+0x10
+mov.b   @r11,   r15
+tst.b   r15
+jnz     $-0x12
+inc     r11
+sxt     r15
+push    r15
+push    #0x0
+call    #0x2464             //Gah it made multiple functions
+add     #0x4,   sp
+mov.b   @r11,   r15
+tst.b   r15
+jnz     $-0x12
+push    #0xa
+push    #0x0
+call    #0x2464
+add     #0x4,   sp
+push    #0x1f
+mov     #0xffdc,r15
+add     r4,     r15
+push    r15
+push    #0x2
+call    #0x2464             //Asks me for the password
+add     #0x6,   sp
+cmp     #0xb292,-0x24(r4)   //THIS IS THE PASSWORD COMPARE
+jnz     $+0xc               //Okay, this instruction is at 244e
+...
+add     #0x20,  sp          //This one is at 245a
+pop     r4
+pop     r11
+ret
+
+
+#2464                       //Prints characters
+mov     0x2(sp),r14
+push    sr
+mov     r14,    r15
+swpb    r15
+mov     r15,    sr
+bis     #0x8000,sr
+call    #0x10               //__trap_interrupt, just returns
+pop     sr
+ret
+
+At the password compare, r4 has value 43fe. 43fe-24=43da
+
+I'm going to try to enter b292. Nope. 92b2?
+
+Yep. I need to work on my endianness.

