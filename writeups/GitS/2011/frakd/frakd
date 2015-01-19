@@ -1,3 +1,11 @@
+Note to future readers:
+
+I started this challenge quite some time ago, and it was my first major CTF exploitation challenge. I struggled with it for quite a long time and came up with a solution that required me to disable ASLR---so it wasn't really a solution.
+
+When I came back to revisit it (I didn't want to let it win), I learned that the stack was actually supposed to be executable. That would have made things a lot easier the first time around (though I still would have struggled). I did eventually solve it anyway though.
+
+=====================================================
+
 That's a long filename so I did mv frakd<tab> frakd
 
 Ran objdump -M intel -d frakd.
